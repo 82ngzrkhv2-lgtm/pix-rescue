@@ -86,6 +86,7 @@ export default function Homologation() {
   const [finishedAt, setFinishedAt] = useState<Date | null>(null)
   
   const consoleEndRef = useRef<HTMLDivElement>(null)
+  const loggedEventsRef = useRef<Set<string>>(new Set())
 
   // Adicionar entrada ao console de logs
   const addLog = (message: string, type: 'info' | 'success' | 'warning' | 'error' | 'system' = 'info') => {
@@ -258,6 +259,7 @@ export default function Homologation() {
     const now = new Date()
     setStartedAt(now)
     setLogs([])
+    loggedEventsRef.current = new Set()
     setPixEvent(null)
     setPaidEvent(null)
     setPhase1FinishedAt(null)
@@ -315,6 +317,14 @@ export default function Homologation() {
 
         if (error) throw error
         if (!events || events.length === 0) return
+
+        // Rastrear e logar webhooks brutos recebidos
+        events.forEach(e => {
+          if (e.event_type === 'webhook_received' && !loggedEventsRef.current.has(e.id)) {
+            loggedEventsRef.current.add(e.id)
+            addLog(`🔔 Debug: Webhook bruto recebido na nuvem! Payload: ${JSON.stringify(e.payload)}`, 'info')
+          }
+        })
 
         // ────────── FASE 1: PIX GERADO ──────────
         if (homologationMode === 'phase1') {
