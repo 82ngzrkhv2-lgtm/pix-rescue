@@ -86,6 +86,15 @@ const normalizers: Record<string, (b: any) => any> = {
 
 // ─── Enviar mensagem via Evolution API ───────────────────────────────────────
 
+function formatBrazilianPhone(phone: string): string {
+  let clean = phone.replace(/\D/g, '')
+  if (!clean) return ''
+  if (clean.length === 10 || clean.length === 11) {
+    clean = '55' + clean
+  }
+  return clean
+}
+
 async function sendWhatsAppMessage(
   evolutionUrl: string,
   evolutionKey: string,
@@ -93,16 +102,31 @@ async function sendWhatsAppMessage(
   phone: string,
   text: string
 ) {
-  const cleanPhone = phone.replace(/\D/g, '')
+  const cleanPhone = formatBrazilianPhone(phone)
+  if (!cleanPhone) {
+    console.error('Invalid phone number provided:', phone)
+    return false
+  }
+
+  console.log(`Sending WhatsApp message to ${cleanPhone} using instance ${instanceName}`)
+
   const res = await fetch(`${evolutionUrl}/message/sendText/${instanceName}`, {
     method: 'POST',
     headers: { 'apikey': evolutionKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       number: cleanPhone,
       options: { delay: 1200 },
-      textMessage: { text },
+      text: text,
     }),
   })
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}))
+    console.error(`Failed to send WhatsApp. Status: ${res.status}. Error:`, JSON.stringify(errBody))
+  } else {
+    console.log(`WhatsApp message sent successfully to ${cleanPhone}`)
+  }
+
   return res.ok
 }
 

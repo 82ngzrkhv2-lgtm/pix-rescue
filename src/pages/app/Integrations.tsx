@@ -915,7 +915,10 @@ function TestRecoveryDrawer({
     setStatus('sending')
 
     const token = integration?.webhook_token
-    const cleanPhone = whatsapp.replace(/\D/g, '')
+    let cleanPhone = whatsapp.replace(/\D/g, '')
+    if (cleanPhone.length === 10 || cleanPhone.length === 11) {
+      cleanPhone = '55' + cleanPhone
+    }
 
     try {
       const payload = {

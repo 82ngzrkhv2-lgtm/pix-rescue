@@ -61,7 +61,20 @@ export default function WhatsApp() {
       const state = data?.instance?.state ?? data?.state
       if (state === 'open') {
         setStatus('connected')
-        const phoneNumber = data?.instance?.profileName || data?.instance?.wuid?.split('@')[0]
+        
+        let phoneNumber = null
+        try {
+          const instancesList = await evolutionRequest('/instance/fetchInstances')
+          if (Array.isArray(instancesList)) {
+            const currentInst = instancesList.find((i: any) => i.name === instanceName)
+            if (currentInst?.ownerJid) {
+              phoneNumber = currentInst.ownerJid.split('@')[0]
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching instance details:', err)
+        }
+
         if (phoneNumber) setPhone(formatPhone(phoneNumber))
         stopPolling()
         await saveInstanceToDb('connected', phoneNumber)
@@ -124,7 +137,20 @@ export default function WhatsApp() {
         const state = data?.instance?.state ?? data?.state
         if (state === 'open') {
           setStatus('connected')
-          const phoneNumber = data?.instance?.profileName || data?.instance?.wuid?.split('@')[0]
+          
+          let phoneNumber = null
+          try {
+            const instancesList = await evolutionRequest('/instance/fetchInstances')
+            if (Array.isArray(instancesList)) {
+              const currentInst = instancesList.find((i: any) => i.name === instanceName)
+              if (currentInst?.ownerJid) {
+                phoneNumber = currentInst.ownerJid.split('@')[0]
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching instance details:', err)
+          }
+
           if (phoneNumber) setPhone(formatPhone(phoneNumber))
           setQrCode(null)
           stopPolling()
