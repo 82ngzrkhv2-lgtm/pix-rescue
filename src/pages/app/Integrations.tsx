@@ -754,6 +754,72 @@ function IntegrationDrawer({
   )
 }
 
+// ─── Flow Seeding Helper ──────────────────────────────────────────────────────
+const ensureDefaultFlowExists = async (userId: string) => {
+  try {
+    const { data: existingFlows, error: fetchErr } = await supabase
+      .from('flows')
+      .select('id')
+      .eq('user_id', userId)
+      .limit(1)
+
+    if (fetchErr) {
+      console.error('Error fetching flows:', fetchErr)
+      return
+    }
+
+    if (existingFlows && existingFlows.length > 0) {
+      return
+    }
+
+    console.log('No flows found, seeding default flow...')
+
+    const { data: newFlow, error: flowErr } = await supabase
+      .from('flows')
+      .insert({
+        user_id: userId,
+        name: 'Recuperação Rápida (PIX)',
+        status: 'active'
+      })
+      .select()
+      .maybeSingle()
+
+    if (flowErr || !newFlow) {
+      console.error('Error creating default flow:', flowErr)
+      return
+    }
+
+    const defaultSteps = [
+      {
+        flow_id: newFlow.id,
+        delay_minutes: 2,
+        message: 'Olá {{nome}}! Tudo bem?\n\nVi que você gerou um PIX para o produto *{{produto}}*, mas o pagamento ainda não foi confirmado.\n\nPara facilitar, aqui está o seu código Copia e Cola do PIX:\n\n```\n{{pix}}\n```\n\nCaso tenha alguma dúvida ou precise de ajuda, é só responder a essa mensagem! 😊',
+        step_order: 0,
+        active: true
+      },
+      {
+        flow_id: newFlow.id,
+        delay_minutes: 15,
+        message: 'Ainda estou guardando o seu acesso ao *{{produto}}*, {{nome}}! 🕒\n\nCaso tenha ocorrido algum erro ou queira pagar por cartão ou boleto, me avise por aqui.\n\nGaranta seu acesso agora: {{link_checkout}}',
+        step_order: 1,
+        active: true
+      }
+    ]
+
+    const { error: stepsErr } = await supabase
+      .from('flow_steps')
+      .insert(defaultSteps)
+
+    if (stepsErr) {
+      console.error('Error creating default flow steps:', stepsErr)
+    } else {
+      console.log('Default flow and steps seeded successfully!')
+    }
+  } catch (err) {
+    console.error('Failed to ensure default flow exists:', err)
+  }
+}
+
 // ─── Test Recovery Drawer ─────────────────────────────────────────────────────
 function TestRecoveryDrawer({
   platform,
@@ -798,12 +864,15 @@ function TestRecoveryDrawer({
     if (!user) return
     setLoadingDiagnostics(true)
     try {
+      // Garantir que existe pelo menos um fluxo de teste ativo antes de rodar os diagnósticos
+      await ensureDefaultFlowExists(user.id)
+
       // 1. WhatsApp conectado & 2. Instância online
       const { data: whatsappData } = await supabase
         .from('whatsapp_instances')
         .select('status')
         .eq('user_id', user.id)
-        .single()
+        .maybeSingle()
       
       const whatsappConnected = !!whatsappData
       const instanceOnline = whatsappData?.status === 'connected'
@@ -814,7 +883,7 @@ function TestRecoveryDrawer({
         .select('status')
         .eq('user_id', user.id)
         .eq('platform', platform)
-        .single()
+        .maybeSingle()
       
       const integrationActive = integrationData?.status === 'active'
 
@@ -1213,10 +1282,13 @@ export default function Integrations() {
       } else {
         const { data: created } = await supabase
           .from('integrations').insert({ user_id: user!.id, platform, status: 'inactive' })
-          .select().single()
+          .select().maybeSingle()
         if (created) map[platform] = created as IntegrationData
       }
     }
+
+    // Garante que existe fluxo padrão ao carregar
+    await ensureDefaultFlowExists(user!.id)
 
     setIntegrations(map)
     setCompletedPlatform(Object.values(map).some(i => i?.status === 'active'))

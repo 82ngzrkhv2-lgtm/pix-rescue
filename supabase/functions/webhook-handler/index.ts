@@ -148,7 +148,7 @@ serve(async (req) => {
       .select('user_id, webhook_token')
       .eq('platform', platform)
       .eq('webhook_token', token)
-      .single()
+      .maybeSingle()
 
     if (!integration) {
       // Token inválido — mas retornamos 200 para não expor a falha
@@ -214,13 +214,13 @@ serve(async (req) => {
         .select('instance_name, status')
         .eq('user_id', userId)
         .eq('status', 'connected')
-        .single()
+        .maybeSingle()
 
       const { data: profile } = await supabase
         .from('users_profile')
         .select('evolution_api_url, evolution_api_key')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
       if (instance && profile?.evolution_api_url && phone) {
         const msg = event_type === 'purchase_approved'
@@ -246,7 +246,7 @@ serve(async (req) => {
         .select('id, flow_steps(*)')
         .eq('user_id', userId)
         .eq('status', 'active')
-        .single()
+        .maybeSingle()
 
       // Buscar instância e credenciais
       const { data: instance } = await supabase
@@ -254,13 +254,13 @@ serve(async (req) => {
         .select('instance_name')
         .eq('user_id', userId)
         .eq('status', 'connected')
-        .single()
+        .maybeSingle()
 
       const { data: profile } = await supabase
         .from('users_profile')
         .select('evolution_api_url, evolution_api_key')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
       const vars = {
         nome: name ?? 'cliente',

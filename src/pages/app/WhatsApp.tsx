@@ -85,12 +85,35 @@ export default function WhatsApp() {
 
   const saveInstanceToDb = async (st: string, ph?: string) => {
     if (!user) return
-    await supabase.from('whatsapp_instances').upsert({
-      user_id: user.id,
-      instance_name: instanceName,
-      status: st,
-      phone: ph ?? null,
-    }, { onConflict: 'user_id' })
+    try {
+      const { data: existing } = await supabase
+        .from('whatsapp_instances')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (existing) {
+        await supabase
+          .from('whatsapp_instances')
+          .update({
+            status: st,
+            phone: ph ?? null,
+            instance_name: instanceName,
+          })
+          .eq('id', existing.id)
+      } else {
+        await supabase
+          .from('whatsapp_instances')
+          .insert({
+            user_id: user.id,
+            instance_name: instanceName,
+            status: st,
+            phone: ph ?? null,
+          })
+      }
+    } catch (err) {
+      console.error('Error saving instance to DB:', err)
+    }
   }
 
   const startPollingStatus = () => {
