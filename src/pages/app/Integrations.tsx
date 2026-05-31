@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Copy, Check, ExternalLink, X, CheckCircle, RefreshCw,
-  Layers, Clock, Zap, ArrowRight, ChevronRight, LayoutDashboard,
-  Wifi, AlertCircle,
+  Layers, Clock, Zap, ArrowRight, ChevronRight,
+  AlertCircle,
 } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
@@ -43,6 +42,7 @@ interface DrawerStep {
   pasteReminder?: string
   /** This is the test step */
   isTestStep?: boolean
+  showKiwifyIllustration?: boolean
 }
 
 // ─── Platform configurations ──────────────────────────────────────────────────
@@ -61,45 +61,50 @@ const PLATFORM_META: Record<Platform, {
     steps: [
       {
         id: 'open',
-        title: 'Abra a área de Webhooks',
-        description: 'Clique no botão abaixo. Você será levado diretamente para a tela de criação de Webhooks da Kiwify.',
+        title: 'Abrir área de Webhooks',
+        description: 'Clique no botão abaixo para abrir diretamente a área de Webhooks da Kiwify.',
         openUrl: 'https://dashboard.kiwify.com/apps/webhooks/integrations',
-        openButtonLabel: 'Abrir Área de Webhooks da Kiwify',
+        openButtonLabel: 'Abrir Área de Webhooks',
         openHint: 'Você será levado diretamente para a tela de criação de Webhooks da Kiwify.',
       },
       {
+        id: 'criar-webhook',
+        title: 'Criar Webhook',
+        description: 'Clique em "Criar" para cadastrar um novo Webhook.',
+        showKiwifyIllustration: true,
+      },
+      {
         id: 'copy-url',
-        title: 'Copie sua URL',
-        description: 'Copie a URL abaixo. Você vai colar ela na Kiwify.',
+        title: 'Copiar URL',
+        description: 'Copie a URL abaixo.',
         showUrl: true,
       },
       {
-        id: 'create',
-        title: 'Crie o Webhook na Kiwify',
-        description: 'Dentro da Kiwify, siga este caminho:',
-        navPath: ['Apps', 'Webhooks', 'Criar Webhook'],
+        id: 'paste-url',
+        title: 'Colar a URL',
+        description: 'Cole a URL copiada no campo "URL" da Kiwify.',
+        pasteReminder: 'URL',
       },
       {
-        id: 'paste',
-        title: 'Cole a URL',
-        description: 'No campo "URL do Webhook", cole a URL que você copiou.',
-        pasteReminder: 'URL do Webhook',
+        id: 'produtos',
+        title: 'Selecionar Produtos',
+        description: 'Em Produtos selecione: "Todos que sou produtor". Caso queira limitar posteriormente, poderá escolher produtos específicos.',
       },
       {
-        id: 'events',
-        title: 'Selecione os eventos',
-        description: 'Marque todos estes eventos:',
-        events: ['PIX Gerado', 'PIX Pago', 'Boleto Gerado', 'Compra Aprovada', 'Compra Expirada'],
+        id: 'eventos',
+        title: 'Selecionar Eventos',
+        description: 'Selecione os seguintes eventos. Esses eventos permitem que o PIX RESCUE identifique oportunidades de recuperação automaticamente.',
+        events: ['Pix gerado', 'Boleto gerado', 'Carrinho abandonado', 'Compra aprovada', 'Compra recusada (Opcional)'],
       },
       {
-        id: 'save',
-        title: 'Clique em Criar',
-        description: 'Clique em "Criar" para salvar. Pronto — sua integração está quase finalizada!',
+        id: 'concluir',
+        title: 'Finalizar Configuração',
+        description: 'Clique em "Criar". Pronto, sua integração está configurada!',
       },
       {
         id: 'test',
-        title: 'Tudo certo?',
-        description: 'Clique em testar para confirmar que a Kiwify está enviando os dados corretamente para o PIX RESCUE.',
+        title: 'Testar Recuperação',
+        description: 'Agora vamos fazer um teste real no seu WhatsApp para ver a recuperação em funcionamento!',
         isTestStep: true,
       },
     ],
@@ -230,7 +235,17 @@ const ONBOARDING_STEPS = [
 ]
 
 // ─── Inline copy button ───────────────────────────────────────────────────────
-function InlineCopy({ text, highlight = false }: { text: string; highlight?: boolean }) {
+function InlineCopy({
+  text,
+  highlight = false,
+  buttonLabel = 'Copiar',
+  successLabel = 'Copiado!',
+}: {
+  text: string
+  highlight?: boolean
+  buttonLabel?: string
+  successLabel?: string
+}) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try { await navigator.clipboard.writeText(text) } catch { /* fallback */ }
@@ -261,7 +276,7 @@ function InlineCopy({ text, highlight = false }: { text: string; highlight?: boo
           transition: 'all 0.2s',
         }}
       >
-        {copied ? <><Check size={12} /> Copiado!</> : <><Copy size={12} /> Copiar</>}
+        {copied ? <><Check size={12} /> {successLabel}</> : <><Copy size={12} /> {buttonLabel}</>}
       </button>
     </div>
   )
@@ -353,12 +368,10 @@ function IntegrationDrawer({
   onClose: () => void
   onSuccess: (p: Platform) => void
 }) {
-  const navigate = useNavigate()
   const meta = PLATFORM_META[platform]
   const [step, setStep] = useState(0)
   const [platformOpened, setPlatformOpened] = useState(false)
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
-  const [done, setDone] = useState(false)
   const stepRef = useRef<HTMLDivElement>(null)
 
   const webhookUrl = integration
@@ -382,63 +395,12 @@ function IntegrationDrawer({
 
   const handleTest = async () => {
     setTestStatus('testing')
-    // Simulate a connectivity test (in prod you'd ping Supabase or send a test event)
-    await new Promise(r => setTimeout(r, 1800))
-    // Mark as active in DB
     if (integration) {
       await supabase.from('integrations').update({ status: 'active' }).eq('id', integration.id)
     }
     setTestStatus('ok')
-    setTimeout(() => setDone(true), 600)
+    await new Promise(r => setTimeout(r, 800))
     onSuccess(platform)
-  }
-
-  // ── Success screen ────────────────────────────────────────────────────────
-  if (done) {
-    return (
-      <>
-        {/* Backdrop */}
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 49 }}
-          onClick={onClose}
-        />
-        <aside style={{
-          position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 50,
-          width: '100%', maxWidth: 480,
-          background: '#fff', boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
-          display: 'flex', flexDirection: 'column',
-          animation: 'slideInRight 0.3s cubic-bezier(0.16,1,0.3,1)',
-        }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40, textAlign: 'center' }}>
-            <div style={{
-              width: 80, height: 80, borderRadius: '50%',
-              background: '#ecfdf5', border: '3px solid #10b981',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24,
-            }}>
-              <CheckCircle size={40} style={{ color: '#10b981' }} />
-            </div>
-            <h2 className="font-outfit" style={{ fontSize: 22, fontWeight: 900, color: '#0f172a', marginBottom: 10 }}>
-              {meta.name} conectada! 🎉
-            </h2>
-            <p style={{ fontSize: 14, color: '#64748b', fontWeight: 500, lineHeight: 1.7, maxWidth: 340 }}>
-              Seu recuperador já está ativo. Agora toda vez que um PIX for gerado, o PIX RESCUE começará a recuperar vendas automaticamente.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 300, marginTop: 28 }}>
-              <button
-                onClick={() => { onClose(); navigate('/app/dashboard') }}
-                className="btn btn-primary font-semibold"
-                style={{ justifyContent: 'center', gap: 8, padding: '12px 20px' }}
-              >
-                <LayoutDashboard size={15} /> Ir para Dashboard
-              </button>
-              <button onClick={onClose} className="btn btn-outline font-semibold" style={{ justifyContent: 'center' }}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        </aside>
-      </>
-    )
   }
 
   return (
@@ -564,7 +526,7 @@ function IntegrationDrawer({
                 }}>
                   <CheckCircle size={14} style={{ color: '#10b981', flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#065f46' }}>
-                    Passo 1 concluído — Área de Webhooks aberta
+                    ✅ Área de Webhooks aberta
                   </span>
                 </div>
               )}
@@ -578,6 +540,42 @@ function IntegrationDrawer({
                   <NavPath path={currentStep.navPath} />
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Kiwify Illustration ── */}
+          {currentStep.showKiwifyIllustration && (
+            <div style={{
+              margin: '12px 0',
+              padding: 16, background: '#f8fafc', border: '1.5px solid #e2e8f0',
+              borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 12,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.02)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0', paddingBottom: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', fontFamily: 'monospace' }}>dashboard.kiwify.com/apps/webhooks</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444' }} />
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b' }} />
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: 12, borderRadius: 8, border: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>🔗</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: '#0f172a' }}>Webhooks</span>
+                </div>
+                <div style={{
+                  background: '#5c3cf2', color: '#fff', fontSize: 11, fontWeight: 700,
+                  padding: '6px 12px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4,
+                  boxShadow: '0 2px 8px rgba(92, 60, 242, 0.25)',
+                  border: 'none', cursor: 'default',
+                }}>
+                  Criar
+                </div>
+              </div>
+              <p style={{ fontSize: 10.5, color: '#64748b', fontWeight: 600, textAlign: 'center', margin: 0 }}>
+                👆 Procure pelo botão roxo <strong>"Criar"</strong> na barra superior ou listagem.
+              </p>
             </div>
           )}
 
@@ -597,7 +595,12 @@ function IntegrationDrawer({
                   ⬇️ Copie a URL abaixo e cole na {meta.name}
                 </p>
               </div>
-              <InlineCopy text={webhookUrl} highlight />
+              <InlineCopy
+                text={webhookUrl}
+                highlight
+                buttonLabel="Copiar URL"
+                successLabel="✅ URL copiada com sucesso"
+              />
             </div>
           )}
 
@@ -646,10 +649,10 @@ function IntegrationDrawer({
                   style={{
                     width: '100%', justifyContent: 'center', gap: 10,
                     padding: '13px 20px', fontSize: 13.5,
-                    background: meta.color, color: '#fff', border: 'none', borderRadius: 10,
+                    background: '#10b981', color: '#fff', border: 'none', borderRadius: 10,
                   }}
                 >
-                  <Wifi size={16} /> Testar Integração
+                  <Zap size={16} /> Testar Recuperação
                 </button>
               )}
 
@@ -751,12 +754,441 @@ function IntegrationDrawer({
   )
 }
 
+// ─── Test Recovery Drawer ─────────────────────────────────────────────────────
+function TestRecoveryDrawer({
+  platform,
+  integration,
+  onClose,
+}: {
+  platform: Platform
+  integration: IntegrationData | null
+  onClose: () => void
+}) {
+  const [nome, setNome] = useState('')
+  const [whatsapp, setWhatsapp] = useState('')
+  const [produto, setProduto] = useState('Produto de Teste')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'validation' | 'success' | 'diagnosis'>('idle')
+  const [loadingDiagnostics, setLoadingDiagnostics] = useState(false)
+  const [diagnostics, setDiagnostics] = useState({
+    whatsappConnected: false,
+    instanceOnline: false,
+    integrationActive: false,
+    flowActive: false,
+  })
+
+  // Format phone number live
+  const handlePhoneChange = (val: string) => {
+    const digits = val.replace(/\D/g, '')
+    if (digits.length <= 11) {
+      let formatted = digits
+      if (digits.length > 2) {
+        formatted = `(${digits.slice(0, 2)}) ` + digits.slice(2)
+      }
+      if (digits.length > 7) {
+        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-` + digits.slice(7)
+      }
+      setWhatsapp(formatted)
+    } else {
+      setWhatsapp(val)
+    }
+  }
+
+  const runDiagnostics = async () => {
+    setLoadingDiagnostics(true)
+    try {
+      // 1. WhatsApp conectado & 2. Instância online
+      const { data: whatsappData } = await supabase
+        .from('whatsapp_instances')
+        .select('status')
+        .single()
+      
+      const whatsappConnected = !!whatsappData
+      const instanceOnline = whatsappData?.status === 'connected'
+
+      // 3. Integração ativa
+      const { data: integrationData } = await supabase
+        .from('integrations')
+        .select('status')
+        .eq('platform', platform)
+        .single()
+      
+      const integrationActive = integrationData?.status === 'active'
+
+      // 4. Fluxo habilitado
+      const { data: flowData } = await supabase
+        .from('flows')
+        .select('id')
+        .eq('status', 'active')
+        .limit(1)
+      
+      const flowActive = !!flowData && flowData.length > 0
+
+      setDiagnostics({
+        whatsappConnected,
+        instanceOnline,
+        integrationActive,
+        flowActive,
+      })
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingDiagnostics(false)
+    }
+  }
+
+  const handleSendTest = async () => {
+    if (!nome || !whatsapp || !produto) return
+    setStatus('sending')
+
+    const token = integration?.webhook_token
+    const cleanPhone = whatsapp.replace(/\D/g, '')
+
+    try {
+      const payload = {
+        order_status: 'waiting_payment',
+        is_test: true,
+        customer: {
+          full_name: nome,
+          email: 'test@pixrescue.com',
+          mobile: cleanPhone,
+        },
+        product: {
+          name: produto,
+          id: 'prod-test-id',
+        },
+        payment: {
+          pix_qrcode: '00020101021226870014br.gov.bcb.pix2565qr.example.com/pix/test',
+        },
+        order: {
+          amount: '9700',
+        },
+      }
+
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/webhook-handler?platform=${platform}&token=${token}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error('Erro ao enviar')
+      }
+
+      setStatus('sent')
+      // Auto transition to validation after 2.5 seconds
+      setTimeout(() => {
+        setStatus('validation')
+      }, 2500)
+    } catch (err) {
+      console.error(err)
+      setStatus('validation')
+    }
+  }
+
+  const handleNotReceived = async () => {
+    setStatus('diagnosis')
+    await runDiagnostics()
+  }
+
+  return (
+    <>
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 49 }}
+        onClick={onClose}
+      />
+      <aside style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 50,
+        width: '100%', maxWidth: 480,
+        background: '#fff', boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
+        display: 'flex', flexDirection: 'column',
+        animation: 'slideInRight 0.3s cubic-bezier(0.16,1,0.3,1)',
+      }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '18px 22px',
+          borderBottom: '1px solid #f1f5f9',
+          flexShrink: 0,
+        }}>
+          <div>
+            <h2 className="font-outfit" style={{ fontSize: 16, fontWeight: 900, color: '#0f172a' }}>
+              Teste sua recuperação em tempo real
+            </h2>
+            <p style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, marginTop: 1 }}>
+              Receba agora mesmo uma mensagem de recuperação no seu WhatsApp.
+            </p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '22px' }}>
+          {status === 'idle' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Passo 1: Nome */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 850, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  PASSO 1: Nome do Cliente
+                </label>
+                <input
+                  type="text"
+                  placeholder="Seu nome"
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: 8,
+                    border: '1.5px solid #e2e8f0', fontSize: 13.5, fontWeight: 600,
+                    outline: 'none', transition: 'border 0.2s',
+                  }}
+                />
+              </div>
+
+              {/* Passo 2: WhatsApp */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 850, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  PASSO 2: WhatsApp para Receber o Teste
+                </label>
+                <input
+                  type="text"
+                  placeholder="(11) 99999-9999"
+                  value={whatsapp}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: 8,
+                    border: '1.5px solid #e2e8f0', fontSize: 13.5, fontWeight: 600,
+                    outline: 'none', transition: 'border 0.2s',
+                  }}
+                />
+                <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, display: 'block', marginTop: 4 }}>
+                  💡 Utilize seu próprio número ou um número de teste.
+                </span>
+              </div>
+
+              {/* Passo 3: Produto */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 850, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  PASSO 3: Produto a ser Simulado
+                </label>
+                <input
+                  type="text"
+                  placeholder="Nome do produto"
+                  value={produto}
+                  onChange={(e) => setProduto(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: 8,
+                    border: '1.5px solid #e2e8f0', fontSize: 13.5, fontWeight: 600,
+                    outline: 'none', transition: 'border 0.2s',
+                  }}
+                />
+              </div>
+
+              {/* Botão Enviar */}
+              <button
+                onClick={handleSendTest}
+                disabled={!nome || !whatsapp || !produto}
+                className="btn btn-primary animate-fade-in"
+                style={{
+                  width: '100%', justifyContent: 'center', padding: '12px 20px',
+                  background: '#10b981', border: 'none', fontSize: 14, fontWeight: 800,
+                  marginTop: 10,
+                  opacity: (!nome || !whatsapp || !produto) ? 0.5 : 1,
+                  cursor: (!nome || !whatsapp || !produto) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Enviar Teste
+              </button>
+            </div>
+          )}
+
+          {status === 'sending' && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', textAlign: 'center' }}>
+              <div className="spinner-dark animate-spin" style={{ width: 40, height: 40, border: '4px solid #f3f3f3', borderTop: '4px solid #10b981', borderRadius: '50%', marginBottom: 20 }} />
+              <h3 className="font-outfit" style={{ fontSize: 16, fontWeight: 900, color: '#0f172a' }}>Simulando Venda...</h3>
+              <p style={{ fontSize: 13, color: '#64748b', fontWeight: 600, marginTop: 6, maxWidth: 280 }}>
+                Disparando evento de <strong>Pix gerado</strong> pelo fluxo de produção do PIX RESCUE.
+              </p>
+            </div>
+          )}
+
+          {status === 'sent' && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '30px 10px', textAlign: 'center' }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%', background: '#ecfdf5', border: '3px solid #10b981',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20
+              }}>
+                <CheckCircle size={32} style={{ color: '#10b981' }} />
+              </div>
+              <h3 className="font-outfit" style={{ fontSize: 18, fontWeight: 900, color: '#0f172a' }}>
+                ✅ Mensagem enviada com sucesso
+              </h3>
+              <p style={{ fontSize: 13, color: '#64748b', fontWeight: 600, marginTop: 8, lineHeight: 1.6, maxWidth: 320 }}>
+                Verifique seu WhatsApp.<br />
+                Você acabou de testar exatamente o mesmo processo que seus leads receberão.
+              </p>
+            </div>
+          )}
+
+          {status === 'validation' && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px 10px', textAlign: 'center' }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: '50%', background: '#e0f2fe',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16
+              }}>
+                <Zap size={24} style={{ color: '#0284c7' }} />
+              </div>
+              <h3 className="font-outfit" style={{ fontSize: 17, fontWeight: 900, color: '#0f172a', marginBottom: 6 }}>
+                Você recebeu a mensagem?
+              </h3>
+              <p style={{ fontSize: 12.5, color: '#64748b', fontWeight: 600, marginBottom: 24 }}>
+                Responda abaixo para confirmar se está tudo funcionando perfeitamente.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
+                <button
+                  onClick={() => setStatus('success')}
+                  className="btn"
+                  style={{
+                    width: '100%', justifyContent: 'center', background: '#10b981', color: '#fff',
+                    border: 'none', padding: '12px', fontSize: 13.5, fontWeight: 800
+                  }}
+                >
+                  Sim Recebi
+                </button>
+                <button
+                  onClick={handleNotReceived}
+                  className="btn btn-outline"
+                  style={{
+                    width: '100%', justifyContent: 'center', borderColor: '#f43f5e', color: '#f43f5e',
+                    padding: '12px', fontSize: 13.5, fontWeight: 800
+                  }}
+                >
+                  Não Recebi
+                </button>
+              </div>
+            </div>
+          )}
+
+          {status === 'success' && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 10px', textAlign: 'center' }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: '50%', background: '#ecfdf5', border: '3px solid #10b981',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20
+              }}>
+                <CheckCircle size={36} style={{ color: '#10b981' }} />
+              </div>
+              <h3 className="font-outfit" style={{ fontSize: 20, fontWeight: 900, color: '#0f172a', marginBottom: 8 }}>
+                🎉 Perfeito!
+              </h3>
+              <p style={{ fontSize: 13.5, color: '#475569', fontWeight: 600, lineHeight: 1.6, marginBottom: 28, maxWidth: 300 }}>
+                Sua integração está funcionando corretamente.
+              </p>
+              <button
+                onClick={() => { onClose(); window.location.href = '/app/dashboard' }}
+                className="btn btn-primary"
+                style={{
+                  width: '100%', justifyContent: 'center', padding: '12px', fontSize: 14, fontWeight: 800
+                }}
+              >
+                Ir para Dashboard
+              </button>
+            </div>
+          )}
+
+          {status === 'diagnosis' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid #f1f5f9', paddingBottom: 10 }}>
+                <AlertCircle size={18} style={{ color: '#f43f5e' }} />
+                <h3 className="font-outfit" style={{ fontSize: 14.5, fontWeight: 900, color: '#0f172a' }}>
+                  Diagnóstico Automático
+                </h3>
+              </div>
+
+              {loadingDiagnostics ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', padding: '20px 0' }}>
+                  <div className="spinner-dark animate-spin" style={{ width: 16, height: 16, border: '2px solid #ccc', borderTop: '2px solid #0f172a', borderRadius: '50%' }} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#475569' }}>Analisando sua conta...</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: '#334155' }}>WhatsApp conectado?</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: diagnostics.whatsappConnected ? '#10b981' : '#f43f5e' }}>
+                      {diagnostics.whatsappConnected ? '✅ Sim' : '❌ Não'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: '#334155' }}>Instância online?</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: diagnostics.instanceOnline ? '#10b981' : '#f43f5e' }}>
+                      {diagnostics.instanceOnline ? '✅ Sim' : '❌ Não'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: '#334155' }}>Integração ativa?</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: diagnostics.integrationActive ? '#10b981' : '#f43f5e' }}>
+                      {diagnostics.integrationActive ? '✅ Sim' : '❌ Não'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: '#334155' }}>Fluxo habilitado?</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: diagnostics.flowActive ? '#10b981' : '#f43f5e' }}>
+                      {diagnostics.flowActive ? '✅ Sim' : '❌ Não'}
+                    </span>
+                  </div>
+
+                  <div style={{ marginTop: 10, padding: '12px 14px', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 10 }}>
+                    <h4 style={{ fontSize: 12, fontWeight: 800, color: '#9f1239', marginBottom: 6 }}>Possíveis Correções:</h4>
+                    <ul style={{ fontSize: 11.5, color: '#be123c', fontWeight: 600, paddingLeft: 16, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(!diagnostics.whatsappConnected || !diagnostics.instanceOnline) && (
+                        <li>Acesse a página de <strong>WhatsApp</strong> e conecte seu número.</li>
+                      )}
+                      {!diagnostics.integrationActive && (
+                        <li>Finalize a integração no webhook da Kiwify antes de testar.</li>
+                      )}
+                      {!diagnostics.flowActive && (
+                        <li>Acesse a página de <strong>Fluxos</strong> e certifique-se de ativar pelo menos um fluxo.</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                <button
+                  onClick={() => setStatus('idle')}
+                  className="btn btn-primary"
+                  style={{ flex: 1, justifyContent: 'center', padding: '12px', fontSize: 13, fontWeight: 800 }}
+                >
+                  Tentar Novamente
+                </button>
+                <button
+                  onClick={onClose}
+                  className="btn btn-outline"
+                  style={{ flex: 1, justifyContent: 'center', padding: '12px', fontSize: 13, fontWeight: 800 }}
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
+    </>
+  )
+}
+
 // ─── Main Integrations page ───────────────────────────────────────────────────
 export default function Integrations() {
   const { user } = useAuth()
   const { plan, limits, usage, canSwapPlatform, daysUntilSwap, activePlatform } = usePlan()
   const [integrations, setIntegrations] = useState<Record<Platform, IntegrationData | null>>({ kiwify: null, hotmart: null, kirvano: null })
   const [openPlatform, setOpenPlatform] = useState<Platform | null>(null)
+  const [openTestPlatform, setOpenTestPlatform] = useState<Platform | null>(null)
   const [loading, setLoading] = useState(true)
   const [completedPlatform, setCompletedPlatform] = useState(false)
   const [upgradeModal, setUpgradeModal] = useState(false)
@@ -792,6 +1224,8 @@ export default function Integrations() {
       [platform]: prev[platform] ? { ...prev[platform]!, status: 'active' } : prev[platform],
     }))
     setCompletedPlatform(true)
+    setOpenPlatform(null)
+    setOpenTestPlatform(platform)
   }
 
   const hasWhatsApp = true
@@ -930,14 +1364,33 @@ export default function Integrations() {
                       {isActive ? '🟢 Ativo' : '🔴 Aguardando'}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
-                    <button
-                      onClick={e => { e.stopPropagation(); setOpenPlatform(p) }}
-                      className="btn btn-primary btn-sm font-bold"
-                      style={{ flex: 1, justifyContent: 'center', background: isActive ? '#059669' : meta.color, border: 'none', gap: 6 }}
-                    >
-                      {isActive ? <><CheckCircle size={13} /> Reconfigurar</> : <><ExternalLink size={13} /> Conectar</>}
-                    </button>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 'auto', width: '100%' }}>
+                    {isActive ? (
+                      <>
+                        <button
+                          onClick={e => { e.stopPropagation(); setOpenPlatform(p) }}
+                          className="btn btn-outline btn-sm font-bold"
+                          style={{ flex: 1, justifyContent: 'center', gap: 5, fontSize: 11.5 }}
+                        >
+                          Reconfigurar
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setOpenTestPlatform(p) }}
+                          className="btn btn-primary btn-sm font-bold"
+                          style={{ flex: 1, justifyContent: 'center', background: '#10b981', border: 'none', gap: 5, fontSize: 11.5 }}
+                        >
+                          <Zap size={12} /> Testar Recuperação
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={e => { e.stopPropagation(); setOpenPlatform(p) }}
+                        className="btn btn-primary btn-sm font-bold"
+                        style={{ flex: 1, justifyContent: 'center', background: meta.color, border: 'none', gap: 6 }}
+                      >
+                        <ExternalLink size={13} /> Conectar
+                      </button>
+                    )}
                   </div>
                 </div>
               )
@@ -973,6 +1426,15 @@ export default function Integrations() {
 
       {upgradeModal && (
         <UpgradeModal trigger="platforms" currentPlan={plan} onClose={() => setUpgradeModal(false)} />
+      )}
+
+      {/* Test Recovery Drawer */}
+      {openTestPlatform && (
+        <TestRecoveryDrawer
+          platform={openTestPlatform}
+          integration={integrations[openTestPlatform]}
+          onClose={() => setOpenTestPlatform(null)}
+        />
       )}
     </AppLayout>
   )

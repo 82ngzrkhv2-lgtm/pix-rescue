@@ -237,6 +237,8 @@ serve(async (req) => {
       }
     }
 
+    const isTest = body.is_test === true
+
     if (event_type === 'pix_generated' || event_type === 'boleto_generated') {
       // Buscar fluxo ativo do usuário
       const { data: activeFlow } = await supabase
@@ -246,43 +248,45 @@ serve(async (req) => {
         .eq('status', 'active')
         .single()
 
-      if (activeFlow?.flow_steps?.length) {
-        const steps = (activeFlow.flow_steps as any[]).sort((a, b) => a.step_order - b.step_order)
-        const vars = {
-          nome: name ?? 'cliente',
-          produto: product_name ?? 'produto',
-          pix: pix_code ?? '',
-          link_checkout: checkout_url ?? '',
-        }
+      // Buscar instância e credenciais
+      const { data: instance } = await supabase
+        .from('whatsapp_instances')
+        .select('instance_name')
+        .eq('user_id', userId)
+        .eq('status', 'connected')
+        .single()
 
-        // Buscar instância e credenciais
-        const { data: instance } = await supabase
-          .from('whatsapp_instances')
-          .select('instance_name')
-          .eq('user_id', userId)
-          .eq('status', 'connected')
-          .single()
+      const { data: profile } = await supabase
+        .from('users_profile')
+        .select('evolution_api_url, evolution_api_key')
+        .eq('id', userId)
+        .single()
 
-        const { data: profile } = await supabase
-          .from('users_profile')
-          .select('evolution_api_url, evolution_api_key')
-          .eq('id', userId)
-          .single()
+      const vars = {
+        nome: name ?? 'cliente',
+        produto: product_name ?? 'produto',
+        pix: pix_code ?? '00020101021226870014br.gov.bcb.pix2565qr.example.com/pix/test',
+        link_checkout: checkout_url ?? 'https://pixrescue.com',
+      }
 
-        if (instance && profile?.evolution_api_url && lead?.id) {
+      if (instance && profile?.evolution_api_url && lead?.id) {
+        let sentAny = false
+
+        if (activeFlow?.flow_steps?.length) {
+          const steps = (activeFlow.flow_steps as any[]).sort((a, b) => a.step_order - b.step_order)
+          
           for (const step of steps) {
             if (!step.active) continue
 
             // Registrar mensagem como pendente
-            await supabase.from('messages').insert({
+            const { data: msgObj } = await supabase.from('messages').insert({
               lead_id: lead.id,
               flow_step_id: step.id,
               status: 'pending',
-            })
+            }).select().single()
 
-            // Disparar após delay (Edge Functions não têm sleep longo — aqui simula o 1º disparo imediato)
-            // Para delays reais, usar Supabase pg_cron ou Deno.cron
-            if (step.delay_minutes === 0) {
+            // Disparar após delay (se for teste, dispara a primeira ativa imediatamente!)
+            if (step.delay_minutes === 0 || (isTest && !sentAny)) {
               const rendered = renderMessage(step.message, vars)
               const ok = await sendWhatsAppMessage(
                 profile.evolution_api_url,
@@ -291,12 +295,39 @@ serve(async (req) => {
                 phone,
                 rendered
               )
-              await supabase.from('messages').update({
-                status: ok ? 'sent' : 'failed',
-                sent_at: new Date().toISOString(),
-              }).eq('lead_id', lead.id).eq('flow_step_id', step.id)
+              if (msgObj?.id) {
+                await supabase.from('messages').update({
+                  status: ok ? 'sent' : 'failed',
+                  sent_at: new Date().toISOString(),
+                }).eq('id', msgObj.id)
+              }
+              
+              if (isTest) {
+                sentAny = true
+                break // apenas um disparo no teste
+              }
             }
           }
+        }
+
+        // Se for teste e não enviou nada porque não tem passos ativos ou fluxo ativo, enviar o padrão
+        if (isTest && !sentAny) {
+          const defaultMsg = `Olá ${vars.nome} 👋\n\nVi que você iniciou a compra de *${vars.produto}*.\n\nSeu pagamento ainda está disponível.\n\nFinalize agora usando o código abaixo:\n\n${vars.pix}`
+          
+          const ok = await sendWhatsAppMessage(
+            profile.evolution_api_url,
+            profile.evolution_api_key ?? '',
+            instance.instance_name,
+            phone,
+            defaultMsg
+          )
+
+          await supabase.from('messages').insert({
+            lead_id: lead.id,
+            status: ok ? 'sent' : 'failed',
+            sent_at: new Date().toISOString(),
+            error_message: ok ? null : 'Falha Evolution API',
+          })
         }
       }
     }
