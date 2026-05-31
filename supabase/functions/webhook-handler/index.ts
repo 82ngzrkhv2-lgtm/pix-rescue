@@ -167,6 +167,22 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    // REGISTRAR LOG DE WEBHOOK BRUTO IMEDIATAMENTE (COM USER_ID PADRÃO PARA DEBUG OPERACIONAL)
+    const debugUserId = "b89e217e-e536-48d2-9960-a0ffe7624e8a"
+    await supabase.from('events').insert({
+      user_id: debugUserId,
+      event_type: 'webhook_received',
+      platform: platform ?? 'desconhecido',
+      payload: {
+        debug_token: token,
+        debug_platform: platform,
+        raw_body: body,
+        url: req.url,
+        headers: Object.fromEntries(req.headers.entries())
+      },
+      revenue: 0
+    })
+
     // 1. Validar token da integração
     const { data: integration, error: intErr } = await supabase
       .from('integrations')
