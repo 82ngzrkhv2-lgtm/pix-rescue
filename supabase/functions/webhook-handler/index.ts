@@ -194,27 +194,61 @@ serve(async (req) => {
       })
     }
 
-    // 3. Upsert lead
-    const { data: lead } = await supabase
+    // 3. Upsert lead de forma segura (evita erro de constraint 42P10)
+    let lead = null
+    const { data: existingLead } = await supabase
       .from('leads')
-      .upsert({ user_id: userId, phone, name, email }, { onConflict: 'user_id,phone' })
-      .select()
-      .single()
+      .select('*')
+      .eq('user_id', userId)
+      .eq('phone', phone)
+      .maybeSingle()
 
-    // 4. Upsert produto
+    if (existingLead) {
+      const { data: updatedLead } = await supabase
+        .from('leads')
+        .update({ name, email })
+        .eq('id', existingLead.id)
+        .select()
+        .maybeSingle()
+      lead = updatedLead
+    } else {
+      const { data: newLead } = await supabase
+        .from('leads')
+        .insert({ user_id: userId, phone, name, email })
+        .select()
+        .maybeSingle()
+      lead = newLead
+    }
+
+    // 4. Upsert produto de forma segura (evita erro de constraint 42P10)
     let productId: string | null = null
     if (product_name) {
-      const { data: product } = await supabase
+      const { data: existingProduct } = await supabase
         .from('products')
-        .upsert({
-          user_id: userId,
-          product_name,
-          external_product_id: external_product_id ?? '',
-          platform,
-        }, { onConflict: 'user_id,external_product_id' })
-        .select()
-        .single()
-      productId = product?.id ?? null
+        .select('id')
+        .eq('user_id', userId)
+        .eq('external_product_id', external_product_id ?? '')
+        .maybeSingle()
+
+      if (existingProduct) {
+        productId = existingProduct.id
+        await supabase
+          .from('products')
+          .update({ product_name, platform })
+          .eq('id', existingProduct.id)
+      } else {
+        const { data: newProduct } = await supabase
+          .from('products')
+          .insert({
+            user_id: userId,
+            product_name,
+            external_product_id: external_product_id ?? '',
+            platform,
+          })
+          .select()
+          .maybeSingle()
+        productId = newProduct?.id ?? null
+      }
     }
 
     // 5. Salvar evento
@@ -264,13 +298,15 @@ serve(async (req) => {
     const isTest = body.is_test === true
 
     if (event_type === 'pix_generated' || event_type === 'boleto_generated') {
-      // Buscar fluxo ativo do usuário
-      const { data: activeFlow } = await supabase
+      // Buscar fluxo ativo do usuário (limita a 1 para evitar falha se houver duplicados)
+      const { data: activeFlows } = await supabase
         .from('flows')
         .select('id, flow_steps(*)')
         .eq('user_id', userId)
         .eq('status', 'active')
-        .maybeSingle()
+        .limit(1)
+
+      const activeFlow = activeFlows && activeFlows.length > 0 ? activeFlows[0] : null
 
       // Buscar instância e credenciais
       const { data: instance } = await supabase
