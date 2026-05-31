@@ -17,6 +17,12 @@ export default defineConfig(({ mode }) => {
           target: evolutionUrl,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/evolution-api/, ''),
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              proxyReq.removeHeader('origin');
+              proxyReq.removeHeader('referer');
+            });
+          }
         }
       }
     }
