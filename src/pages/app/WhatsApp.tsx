@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, Power, QrCode, Wifi, WifiOff, Loader2, AlertCircle, CheckCircle2, Zap } from 'lucide-react'
+import { RefreshCw, Power, QrCode, Wifi, WifiOff, Loader2, AlertCircle, CheckCircle2, Zap, Trash2, Plus } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 import PlanUsageBar from '../../components/PlanUsageBar'
 import UpgradeModal from '../../components/UpgradeModal'
 import { usePlan } from '../../hooks/usePlan'
+import type { WhatsAppInstance, WhatsAppStatus } from '../../types'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -31,10 +32,13 @@ async function evolutionRequest(path: string, options: RequestInit = {}) {
 
 export default function WhatsApp() {
   const { user } = useAuth()
-  const instanceName = `pixrescue-${user?.id?.slice(0, 8) ?? 'user'}`
-  const { plan, limits, usage } = usePlan()
-  const atLimit = usage.whatsapps >= limits.whatsapps
+  const { plan, limits } = usePlan()
   const [upgradeModal, setUpgradeModal] = useState(false)
+
+  // Abas de Instâncias
+  const [instances, setInstances] = useState<WhatsAppInstance[]>([])
+  const [selectedInstance, setSelectedInstance] = useState<WhatsAppInstance | null>(null)
+  const [loadingInstances, setLoadingInstances] = useState(true)
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
   const [phone, setPhone] = useState<string | null>(null)
@@ -43,10 +47,26 @@ export default function WhatsApp() {
   const [error, setError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Limite de instâncias pelo plano do usuário
+  const atLimit = instances.length >= limits.whatsapps
+
   useEffect(() => {
-    checkConnectionState()
+    if (user) {
+      loadInstances()
+    }
     return () => stopPolling()
-  }, [])
+  }, [user])
+
+  useEffect(() => {
+    if (selectedInstance) {
+      setStatus(selectedInstance.status as ConnectionStatus)
+      setPhone(selectedInstance.phone)
+      setQrCode(null)
+      setError(null)
+      stopPolling()
+      checkConnectionState(selectedInstance.instance_name)
+    }
+  }, [selectedInstance])
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -55,9 +75,60 @@ export default function WhatsApp() {
     }
   }
 
-  const checkConnectionState = async () => {
+  const loadInstances = async () => {
+    if (!user) return
+    setLoadingInstances(true)
     try {
-      const data = await evolutionRequest(`/instance/connectionState/${instanceName}`)
+      const { data, error: fetchErr } = await supabase
+        .from('whatsapp_instances')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
+
+      if (fetchErr) throw fetchErr
+
+      if (data && data.length > 0) {
+        setInstances(data)
+        // Se já tiver um selecionado, mantém ele. Caso contrário, seleciona o primeiro.
+        if (selectedInstance) {
+          const stillExists = data.find(i => i.id === selectedInstance.id)
+          if (stillExists) {
+            setSelectedInstance(stillExists)
+          } else {
+            setSelectedInstance(data[0])
+          }
+        } else {
+          setSelectedInstance(data[0])
+        }
+      } else {
+        // Se não houver conexões, cria a conexão padrão automaticamente (retrocompatibilidade)
+        const defaultName = `pixrescue-${user.id.slice(0, 8)}`
+        const { data: created, error: insertErr } = await supabase
+          .from('whatsapp_instances')
+          .insert({
+            user_id: user.id,
+            instance_name: defaultName,
+            status: 'disconnected',
+          })
+          .select()
+          .maybeSingle()
+
+        if (insertErr) throw insertErr
+        if (created) {
+          setInstances([created])
+          setSelectedInstance(created)
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao carregar instâncias:', err)
+    } finally {
+      setLoadingInstances(false)
+    }
+  }
+
+  const checkConnectionState = async (instName: string) => {
+    try {
+      const data = await evolutionRequest(`/instance/connectionState/${instName}`)
       const state = data?.instance?.state ?? data?.state
       if (state === 'open') {
         setStatus('connected')
@@ -66,7 +137,7 @@ export default function WhatsApp() {
         try {
           const instancesList = await evolutionRequest('/instance/fetchInstances')
           if (Array.isArray(instancesList)) {
-            const currentInst = instancesList.find((i: any) => i.name === instanceName)
+            const currentInst = instancesList.find((i: any) => i.name === instName)
             if (currentInst?.ownerJid) {
               phoneNumber = currentInst.ownerJid.split('@')[0]
             }
@@ -77,7 +148,7 @@ export default function WhatsApp() {
 
         if (phoneNumber) setPhone(formatPhone(phoneNumber))
         stopPolling()
-        await saveInstanceToDb('connected', phoneNumber)
+        await saveInstanceToDb(instName, 'connected', phoneNumber)
       } else if (state === 'connecting' || state === 'qr') {
         setStatus('connecting')
       } else {
@@ -96,13 +167,14 @@ export default function WhatsApp() {
     return `+${digits}`
   }
 
-  const saveInstanceToDb = async (st: string, ph?: string) => {
+  const saveInstanceToDb = async (instName: string, st: WhatsAppStatus, ph?: string) => {
     if (!user) return
     try {
       const { data: existing } = await supabase
         .from('whatsapp_instances')
         .select('id')
         .eq('user_id', user.id)
+        .eq('instance_name', instName)
         .maybeSingle()
 
       if (existing) {
@@ -111,29 +183,27 @@ export default function WhatsApp() {
           .update({
             status: st,
             phone: ph ?? null,
-            instance_name: instanceName,
           })
           .eq('id', existing.id)
-      } else {
-        await supabase
-          .from('whatsapp_instances')
-          .insert({
-            user_id: user.id,
-            instance_name: instanceName,
-            status: st,
-            phone: ph ?? null,
-          })
       }
+      
+      // Atualiza a lista local de instâncias para sincronizar badges na UI
+      setInstances(prev => prev.map(i => {
+        if (i.instance_name === instName) {
+          return { ...i, status: st, phone: ph ?? null }
+        }
+        return i
+      }))
     } catch (err) {
       console.error('Error saving instance to DB:', err)
     }
   }
 
-  const startPollingStatus = () => {
+  const startPollingStatus = (instName: string) => {
     stopPolling()
     pollRef.current = setInterval(async () => {
       try {
-        const data = await evolutionRequest(`/instance/connectionState/${instanceName}`)
+        const data = await evolutionRequest(`/instance/connectionState/${instName}`)
         const state = data?.instance?.state ?? data?.state
         if (state === 'open') {
           setStatus('connected')
@@ -142,7 +212,7 @@ export default function WhatsApp() {
           try {
             const instancesList = await evolutionRequest('/instance/fetchInstances')
             if (Array.isArray(instancesList)) {
-              const currentInst = instancesList.find((i: any) => i.name === instanceName)
+              const currentInst = instancesList.find((i: any) => i.name === instName)
               if (currentInst?.ownerJid) {
                 phoneNumber = currentInst.ownerJid.split('@')[0]
               }
@@ -154,23 +224,32 @@ export default function WhatsApp() {
           if (phoneNumber) setPhone(formatPhone(phoneNumber))
           setQrCode(null)
           stopPolling()
-          await saveInstanceToDb('connected', phoneNumber)
+          await saveInstanceToDb(instName, 'connected', phoneNumber)
         }
       } catch { /* continua polling */ }
     }, 3000)
   }
 
   const handleConnect = async () => {
+    if (!selectedInstance) return
+    const instName = selectedInstance.instance_name
+
     setLoading(true)
     setError(null)
     setStatus('connecting')
 
     try {
+      // 1. Deletar a instância primeiro na Evolution API para garantir que não haja sessões presas/órfãs
+      try {
+        await evolutionRequest(`/instance/delete/${instName}`, { method: 'DELETE' })
+      } catch { /* ignora se a instância não existia ainda */ }
+
+      // 2. Criar a instância do zero
       try {
         await evolutionRequest('/instance/create', {
           method: 'POST',
           body: JSON.stringify({
-            instanceName,
+            instanceName: instName,
             qrcode: true,
             integration: 'WHATSAPP-BAILEYS',
           }),
@@ -180,13 +259,15 @@ export default function WhatsApp() {
       }
 
       await new Promise(r => setTimeout(r, 1500))
-      const qrData = await evolutionRequest(`/instance/connect/${instanceName}`)
+      
+      // 3. Obter QR Code de forma limpa
+      const qrData = await evolutionRequest(`/instance/connect/${instName}`)
       const base64 = qrData?.base64 ?? qrData?.qrcode?.base64 ?? qrData?.code
 
       if (base64) {
         setQrCode(base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`)
-        await saveInstanceToDb('connecting')
-        startPollingStatus()
+        await saveInstanceToDb(instName, 'connecting')
+        startPollingStatus(instName)
       } else {
         throw new Error('QR Code não retornado pela Evolution API')
       }
@@ -207,16 +288,85 @@ export default function WhatsApp() {
   }
 
   const handleDisconnect = async () => {
+    if (!selectedInstance) return
+    const instName = selectedInstance.instance_name
+
     setLoading(true)
     try {
-      await evolutionRequest(`/instance/logout/${instanceName}`, { method: 'DELETE' })
+      await evolutionRequest(`/instance/logout/${instName}`, { method: 'DELETE' })
     } catch { /* ignora */ }
     setStatus('disconnected')
     setPhone(null)
     setQrCode(null)
     stopPolling()
-    await saveInstanceToDb('disconnected')
+    await saveInstanceToDb(instName, 'disconnected')
     setLoading(false)
+  }
+
+  const handleAddNewNumber = async () => {
+    if (atLimit || !user) return
+    setLoading(true)
+    setError(null)
+    try {
+      const uniqueSuffix = Date.now().toString().slice(-4)
+      const newName = `pixrescue-${user.id.slice(0, 8)}-${uniqueSuffix}`
+      
+      const { data: created, error: insertErr } = await supabase
+        .from('whatsapp_instances')
+        .insert({
+          user_id: user.id,
+          instance_name: newName,
+          status: 'disconnected',
+        })
+        .select()
+        .maybeSingle()
+
+      if (insertErr) throw insertErr
+      if (created) {
+        setInstances(prev => [...prev, created])
+        setSelectedInstance(created)
+      }
+    } catch (err: any) {
+      setError('Erro ao adicionar novo número: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteInstance = async (inst: WhatsAppInstance) => {
+    if (!user) return
+    const confirmDelete = window.confirm(`Deseja realmente excluir a conexão do WhatsApp "${inst.phone ?? inst.instance_name}"? Isso desativará os envios vinculados a ela.`)
+    if (!confirmDelete) return
+
+    setLoading(true)
+    try {
+      // 1. Deleta na Evolution API
+      try {
+        await evolutionRequest(`/instance/delete/${inst.instance_name}`, { method: 'DELETE' })
+      } catch { /* ignora */ }
+
+      // 2. Deleta no Banco de Dados
+      const { error: deleteErr } = await supabase
+        .from('whatsapp_instances')
+        .delete()
+        .eq('id', inst.id)
+
+      if (deleteErr) throw deleteErr
+
+      // 3. Atualiza estado
+      const updated = instances.filter(i => i.id !== inst.id)
+      setInstances(updated)
+      
+      if (selectedInstance?.id === inst.id) {
+        setSelectedInstance(updated.length > 0 ? updated[0] : null)
+      } else {
+        await loadInstances()
+      }
+    } catch (err: any) {
+      setError('Erro ao excluir conexão: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -230,7 +380,7 @@ export default function WhatsApp() {
             <h3 className="font-outfit text-xs font-bold text-slate-500 uppercase tracking-wider">WhatsApps Conectados</h3>
             <span className="badge badge-gray text-[10px]">{plan}</span>
           </div>
-          <PlanUsageBar used={usage.whatsapps} total={limits.whatsapps} unit="números" showAlert={false} />
+          <PlanUsageBar used={instances.length} total={limits.whatsapps} unit="números" showAlert={false} />
           {atLimit && (
             <div style={{
               marginTop: 12, padding: '10px 14px',
@@ -248,6 +398,99 @@ export default function WhatsApp() {
                 <Zap size={10} /> Upgrade
               </button>
             </div>
+          )}
+        </div>
+
+        {/* Abas de Conexões do WhatsApp */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+            {loadingInstances ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px' }}>
+                <Loader2 size={12} className="animate-spin text-slate-400" />
+                <span className="text-xs font-semibold text-slate-400">Buscando números...</span>
+              </div>
+            ) : (
+              instances.map((inst, index) => {
+                const isSelected = selectedInstance?.id === inst.id
+                const phoneLabel = inst.phone 
+                  ? formatPhone(inst.phone.split('@')[0])
+                  : `WhatsApp ${index + 1}`
+                return (
+                  <div key={inst.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button
+                      onClick={() => setSelectedInstance(inst)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 12,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: isSelected ? '#0f172a' : '#ffffff',
+                        color: isSelected ? '#ffffff' : '#475569',
+                        border: isSelected ? '1px solid #0f172a' : '1px solid var(--border)',
+                        boxShadow: isSelected ? 'var(--shadow-sm)' : 'none',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                      }}
+                      className="font-outfit"
+                    >
+                      <span className={`status-dot ${inst.status === 'connected' ? 'connected' : inst.status === 'connecting' ? 'connecting' : 'disconnected'}`} style={{ width: 6, height: 6 }} />
+                      {phoneLabel}
+                    </button>
+                    {instances.length > 1 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteInstance(inst) }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 8,
+                          background: '#fef2f2',
+                          border: '1px solid #fee2e2',
+                          color: '#ef4444',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                        }}
+                        title="Excluir Conexão"
+                        onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#fef2f2' }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          {!loadingInstances && (
+            <button
+              onClick={handleAddNewNumber}
+              disabled={atLimit || loading}
+              className="btn btn-outline"
+              style={{
+                padding: '8px 16px',
+                borderRadius: 12,
+                fontSize: 11.5,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                borderColor: atLimit ? '#e2e8f0' : 'var(--primary)',
+                color: atLimit ? '#94a3b8' : 'var(--primary)',
+                background: '#ffffff',
+                cursor: atLimit ? 'not-allowed' : 'pointer',
+                opacity: atLimit ? 0.5 : 1,
+              }}
+            >
+              <Plus size={13} />
+              Conectar Novo Número
+            </button>
           )}
         </div>
 
