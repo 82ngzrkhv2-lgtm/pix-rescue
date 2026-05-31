@@ -169,7 +169,7 @@ serve(async (req) => {
 
     // REGISTRAR LOG DE WEBHOOK BRUTO IMEDIATAMENTE (COM USER_ID PADRÃO PARA DEBUG OPERACIONAL)
     const debugUserId = "b89e217e-e536-48d2-9960-a0ffe7624e8a"
-    await supabase.from('events').insert({
+    const { error: dbgErr } = await supabase.from('events').insert({
       user_id: debugUserId,
       event_type: 'webhook_received',
       platform: platform ?? 'desconhecido',
@@ -182,6 +182,11 @@ serve(async (req) => {
       },
       revenue: 0
     })
+
+    if (dbgErr) {
+      console.error('ERRO DE BANCO NO DEBUG INSERT:', dbgErr)
+      throw new Error(`Erro ao salvar debug do webhook: ${dbgErr.message} (Code: ${dbgErr.code})`)
+    }
 
     // 1. Validar token da integração
     const { data: integration, error: intErr } = await supabase
