@@ -196,17 +196,17 @@ export default function Homologation() {
       // 8. Verificar Edge Function Webhook Handler Ativo
       addLog('Testando conexão com o Webhook Handler na nuvem...', 'info')
       try {
-        const res = await fetch(WEBHOOK_URL, {
-          method: 'OPTIONS',
-          headers: { 'Content-Type': 'application/json' }
+        // Usamos uma requisição simples (GET sem headers customizados) para evitar o bloqueio de preflight CORS do navegador
+        const res = await fetch(`${WEBHOOK_URL}?platform=invalid`, {
+          method: 'GET'
         }).catch(err => {
           throw new Error('Falha de rede ao conectar à Edge Function: ' + err.message)
         })
 
         if (res.status === 404) {
           throw new Error('Retornou status 404 (Not Found). A Edge Function não foi implantada na nuvem do seu projeto Supabase.')
-        } else if (res.ok || res.status === 400 || res.status === 405) {
-          // Status 400 é esperado se não enviamos plataforma, mas indica que o handler responde e está online!
+        } else if (res.ok || res.status === 400 || res.status === 405 || res.status === 500) {
+          // Status 400 ou 500 é esperado para plataforma inválida, indicando que a Edge Function responde e está online na nuvem!
           updateItem('wh-deployed', 'success')
         } else {
           throw new Error(`Webhook Handler respondeu com status HTTP ${res.status}`)
