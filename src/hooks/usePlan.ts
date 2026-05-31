@@ -113,16 +113,16 @@ export function usePlan(): PlanState {
     // 5. Load integrations – find the most recently activated one
     const { data: integData } = await supabase
       .from('integrations')
-      .select('platform, status, updated_at')
+      .select('platform, status, created_at')
       .eq('user_id', user.id)
-      .order('updated_at', { ascending: false })
+      .order('created_at', { ascending: false })
 
     const activeIntegrations = (integData ?? []).filter(i => i.status === 'active')
     const activePlatformCount = activeIntegrations.length
 
     if (activeIntegrations.length > 0) {
       setActivePlatform(activeIntegrations[0].platform)
-      setPlatformActivatedAt(new Date(activeIntegrations[0].updated_at))
+      setPlatformActivatedAt(new Date(activeIntegrations[0].created_at))
     } else {
       setActivePlatform(null)
       setPlatformActivatedAt(null)
