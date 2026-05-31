@@ -15,8 +15,9 @@ export const evolutionApi = {
       },
     })
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ message: 'Erro desconhecido' }))
-      throw new Error(error.message || `HTTP ${res.status}`)
+      const error = await res.json().catch(() => ({}))
+      const errorMsg = error?.response?.message?.[0] || error?.message || `HTTP ${res.status}`
+      throw new Error(errorMsg)
     }
     return res.json()
   },

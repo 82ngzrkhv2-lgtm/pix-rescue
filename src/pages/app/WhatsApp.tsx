@@ -22,7 +22,10 @@ async function evolutionRequest(path: string, options: RequestInit = {}) {
     },
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`)
+  if (!res.ok) {
+    const errorMsg = data?.response?.message?.[0] || data?.message || `HTTP ${res.status}`
+    throw new Error(errorMsg)
+  }
   return data
 }
 
@@ -124,7 +127,7 @@ export default function WhatsApp() {
           }),
         })
       } catch (e: any) {
-        if (!e.message?.includes('already')) throw e
+        if (!e.message?.includes('already') && !e.message?.includes('in use')) throw e
       }
 
       await new Promise(r => setTimeout(r, 1500))
