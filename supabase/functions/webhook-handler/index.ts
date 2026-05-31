@@ -168,21 +168,36 @@ serve(async (req) => {
     )
 
     // 1. Validar token da integração
-    const { data: integration } = await supabase
+    const { data: integration, error: intErr } = await supabase
       .from('integrations')
       .select('user_id, webhook_token')
       .eq('platform', platform)
       .eq('webhook_token', token)
       .maybeSingle()
 
+    if (intErr) {
+      console.error('Erro de banco de dados ao buscar integração:', intErr)
+      throw new Error(`Erro ao buscar integração: ${intErr.message}`)
+    }
+
     if (!integration) {
       // Token inválido — mas retornamos 200 para não expor a falha
+      console.warn(`[Aviso] Token de integração inválido ou não encontrado para plataforma ${platform} e token ${token}`)
       return new Response(JSON.stringify({ received: true }), {
         status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
     const userId = integration.user_id
+
+    // REGISTRAR WEBHOOK BRUTO PARA DEBUG (Garante visibilidade de payloads recebidos)
+    await supabase.from('events').insert({
+      user_id: userId,
+      event_type: 'webhook_received',
+      platform,
+      payload: body,
+      revenue: 0
+    })
 
     // 2. Normalizar payload
     const normalizer = normalizers[platform]
