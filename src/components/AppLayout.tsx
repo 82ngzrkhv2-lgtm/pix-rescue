@@ -2,7 +2,7 @@ import { type ReactNode, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, MessageSquare, Plug, GitBranch, Settings,
-  LogOut, Menu, X, Scroll, CreditCard
+  LogOut, Menu, X, Scroll, CreditCard, Activity
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
@@ -19,6 +19,7 @@ const NAV = [
   { to: '/app/flows',        icon: GitBranch,       label: 'Fluxos' },
   { to: '/app/events',       icon: Scroll,          label: 'Eventos' },
   { to: '/app/plan',         icon: CreditCard,      label: 'Meu Plano' },
+  { to: '/app/diagnostics',  icon: Activity,        label: 'Diagnóstico' },
   { to: '/app/settings',     icon: Settings,        label: 'Configurações' },
 ]
 

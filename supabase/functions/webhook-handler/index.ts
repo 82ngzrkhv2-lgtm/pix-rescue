@@ -298,6 +298,35 @@ serve(async (req) => {
     const isTest = body.is_test === true
 
     if (event_type === 'pix_generated' || event_type === 'boleto_generated') {
+      // 1. Evitar spam de múltiplos PIX para o mesmo lead em curto período (apenas em produção, ignorando testes manuais)
+      if (!isTest && lead?.id) {
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+        
+        // Verificar se houve outro evento do mesmo tipo nos últimos 5 minutos
+        const { data: recentEvents } = await supabase
+          .from('events')
+          .select('id')
+          .eq('lead_id', lead.id)
+          .eq('event_type', event_type)
+          .gte('created_at', fiveMinutesAgo)
+          .limit(1)
+
+        // Verificar se já possui alguma mensagem pendente na fila
+        const { data: pendingMessages } = await supabase
+          .from('messages')
+          .select('id')
+          .eq('lead_id', lead.id)
+          .eq('status', 'pending')
+          .limit(1)
+
+        if ((recentEvents && recentEvents.length > 0) || (pendingMessages && pendingMessages.length > 0)) {
+          console.log(`[Anti-Spam] Ignorando automação repetida para o lead: ${lead.id}`)
+          return new Response(JSON.stringify({ received: true, ignored: true, reason: 'anti-spam' }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+      }
+
       // Buscar fluxo ativo do usuário (limita a 1 para evitar falha se houver duplicados)
       const { data: activeFlows } = await supabase
         .from('flows')
