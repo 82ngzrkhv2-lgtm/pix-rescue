@@ -10,6 +10,7 @@ import Events from './pages/app/Events'
 import Settings from './pages/app/Settings'
 import Plan from './pages/app/Plan'
 import Diagnostics from './pages/app/Diagnostics'
+import Homologation from './pages/app/Homologation'
 import LandingPage from './pages/LandingPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -55,6 +56,7 @@ function AppRoutes() {
       <Route path="/app/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
       <Route path="/app/plan" element={<ProtectedRoute><Plan /></ProtectedRoute>} />
       <Route path="/app/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
+      <Route path="/app/homologation" element={<ProtectedRoute><Homologation /></ProtectedRoute>} />
       <Route path="/app/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
       {/* 404 */}
