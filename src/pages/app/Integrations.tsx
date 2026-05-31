@@ -764,6 +764,7 @@ function TestRecoveryDrawer({
   integration: IntegrationData | null
   onClose: () => void
 }) {
+  const { user } = useAuth()
   const [nome, setNome] = useState('')
   const [whatsapp, setWhatsapp] = useState('')
   const [produto, setProduto] = useState('Produto de Teste')
@@ -794,12 +795,14 @@ function TestRecoveryDrawer({
   }
 
   const runDiagnostics = async () => {
+    if (!user) return
     setLoadingDiagnostics(true)
     try {
       // 1. WhatsApp conectado & 2. Instância online
       const { data: whatsappData } = await supabase
         .from('whatsapp_instances')
         .select('status')
+        .eq('user_id', user.id)
         .single()
       
       const whatsappConnected = !!whatsappData
@@ -809,6 +812,7 @@ function TestRecoveryDrawer({
       const { data: integrationData } = await supabase
         .from('integrations')
         .select('status')
+        .eq('user_id', user.id)
         .eq('platform', platform)
         .single()
       
@@ -818,6 +822,7 @@ function TestRecoveryDrawer({
       const { data: flowData } = await supabase
         .from('flows')
         .select('id')
+        .eq('user_id', user.id)
         .eq('status', 'active')
         .limit(1)
       
