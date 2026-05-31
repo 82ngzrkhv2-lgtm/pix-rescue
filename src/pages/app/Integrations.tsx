@@ -910,6 +910,176 @@ function TestRecoveryDrawer({
     }
   }
 
+  const runClientSideSimulation = async (payload: any) => {
+    console.log('Running client-side webhook simulation fallback...')
+    const userId = user!.id
+    const { customer, product, payment } = payload
+    
+    // 1. Upsert lead de forma segura
+    let lead = null
+    const { data: existingLead } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('phone', customer.mobile)
+      .maybeSingle()
+
+    if (existingLead) {
+      const { data: updatedLead } = await supabase
+        .from('leads')
+        .update({ name: customer.full_name })
+        .eq('id', existingLead.id)
+        .select()
+        .maybeSingle()
+      lead = updatedLead
+    } else {
+      const { data: newLead } = await supabase
+        .from('leads')
+        .insert({ user_id: userId, phone: customer.mobile, name: customer.full_name, email: customer.email })
+        .select()
+        .maybeSingle()
+      lead = newLead
+    }
+
+    if (!lead) throw new Error('Falha ao registrar lead no banco')
+
+    // 2. Upsert produto de forma segura
+    let productId = null
+    const { data: existingProduct } = await supabase
+      .from('products')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('external_product_id', product.id)
+      .maybeSingle()
+
+    if (existingProduct) {
+      productId = existingProduct.id
+    } else {
+      const { data: newProduct } = await supabase
+        .from('products')
+        .insert({
+          user_id: userId,
+          product_name: product.name,
+          external_product_id: product.id,
+          platform,
+        })
+        .select()
+        .maybeSingle()
+      productId = newProduct?.id ?? null
+    }
+
+    // 3. Salvar evento
+    await supabase
+      .from('events')
+      .insert({
+        user_id: userId,
+        lead_id: lead.id,
+        product_id: productId,
+        event_type: 'pix_generated',
+        platform,
+        payload,
+        revenue: 0,
+      })
+
+    // 4. Buscar fluxo ativo e instância
+    const { data: activeFlows } = await supabase
+      .from('flows')
+      .select('id, flow_steps(*)')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .limit(1)
+
+    const activeFlow = activeFlows && activeFlows.length > 0 ? activeFlows[0] : null
+
+    const { data: instance } = await supabase
+      .from('whatsapp_instances')
+      .select('instance_name')
+      .eq('user_id', userId)
+      .eq('status', 'connected')
+      .maybeSingle()
+
+    if (!instance) {
+      throw new Error('Nenhuma instância ativa do WhatsApp conectada!')
+    }
+
+    const vars = {
+      nome: customer.full_name,
+      produto: product.name,
+      pix: payment.pix_qrcode,
+      link_checkout: 'https://pixrescue.com',
+    }
+
+    let sentAny = false
+    let finalOk = false
+
+    const EVOLUTION_URL = import.meta.env.DEV ? '/evolution-api' : import.meta.env.VITE_EVOLUTION_API_URL
+    const EVOLUTION_KEY = import.meta.env.VITE_EVOLUTION_API_KEY
+
+    const sendMsgDirectly = async (msgText: string) => {
+      const res = await fetch(`${EVOLUTION_URL}/message/sendText/${instance.instance_name}`, {
+        method: 'POST',
+        headers: {
+          'apikey': EVOLUTION_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          number: customer.mobile,
+          options: { delay: 100 },
+          text: msgText,
+        })
+      })
+      return res.ok
+    }
+
+    if (activeFlow?.flow_steps?.length) {
+      const steps = activeFlow.flow_steps.sort((a, b) => a.step_order - b.step_order)
+      for (const step of steps) {
+        if (!step.active) continue
+
+        const { data: msgObj } = await supabase.from('messages').insert({
+          lead_id: lead.id,
+          flow_step_id: step.id,
+          status: 'pending',
+        }).select().maybeSingle()
+
+        const rendered = step.message
+          .replace(/{{nome}}/g, vars.nome)
+          .replace(/{{produto}}/g, vars.produto)
+          .replace(/{{pix}}/g, vars.pix)
+          .replace(/{{link_checkout}}/g, vars.link_checkout)
+
+        const ok = await sendMsgDirectly(rendered)
+        finalOk = ok
+
+        if (msgObj?.id) {
+          await supabase.from('messages').update({
+            status: ok ? 'sent' : 'failed',
+            sent_at: new Date().toISOString(),
+          }).eq('id', msgObj.id)
+        }
+
+        sentAny = true
+        break // Apenas 1 disparo no teste
+      }
+    }
+
+    if (!sentAny) {
+      const defaultMsg = `Olá ${vars.nome} 👋\n\nVi que você iniciou a compra de *${vars.produto}*.\n\nSeu pagamento ainda está disponível.\n\nFinalize agora usando o código abaixo:\n\n${vars.pix}`
+      const ok = await sendMsgDirectly(defaultMsg)
+      finalOk = ok
+
+      await supabase.from('messages').insert({
+        lead_id: lead.id,
+        status: ok ? 'sent' : 'failed',
+        sent_at: new Date().toISOString(),
+      })
+    }
+
+    if (!finalOk) {
+      throw new Error('Falha Evolution API')
+    }
+  }
+
   const handleSendTest = async () => {
     if (!nome || !whatsapp || !produto) return
     setStatus('sending')
@@ -920,47 +1090,61 @@ function TestRecoveryDrawer({
       cleanPhone = '55' + cleanPhone
     }
 
+    const payload = {
+      order_status: 'waiting_payment',
+      is_test: true,
+      customer: {
+        full_name: nome,
+        email: 'test@pixrescue.com',
+        mobile: cleanPhone,
+      },
+      product: {
+        name: produto,
+        id: 'prod-test-id',
+      },
+      payment: {
+        pix_qrcode: '00020101021226870014br.gov.bcb.pix2565qr.example.com/pix/test',
+      },
+      order: {
+        amount: '9700',
+      },
+    }
+
     try {
-      const payload = {
-        order_status: 'waiting_payment',
-        is_test: true,
-        customer: {
-          full_name: nome,
-          email: 'test@pixrescue.com',
-          mobile: cleanPhone,
-        },
-        product: {
-          name: produto,
-          id: 'prod-test-id',
-        },
-        payment: {
-          pix_qrcode: '00020101021226870014br.gov.bcb.pix2565qr.example.com/pix/test',
-        },
-        order: {
-          amount: '9700',
-        },
+      let isDeployed = false
+      try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/webhook-handler?platform=${platform}&token=${token}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+        
+        if (response.ok) {
+          isDeployed = true
+        } else if (response.status === 404) {
+          console.log('Production Edge Function returned 404. Falling back to client-side simulation.')
+        } else {
+          throw new Error('Erro ao enviar')
+        }
+      } catch (err) {
+        console.warn('Supabase Edge Function unavailable. Falling back to local simulation.', err)
       }
 
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/webhook-handler?platform=${platform}&token=${token}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        throw new Error('Erro ao enviar')
+      // Se a Edge Function não estiver implantada ou falhar/404, executa a simulação local no navegador
+      if (!isDeployed) {
+        await runClientSideSimulation(payload)
       }
 
       setStatus('sent')
-      // Auto transition to validation after 2.5 seconds
       setTimeout(() => {
         setStatus('validation')
       }, 2500)
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      setStatus('validation')
+      alert(err.message || 'Erro ao realizar o teste')
+      setStatus('idle')
     }
   }
 
