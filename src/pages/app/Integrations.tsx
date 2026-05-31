@@ -2,13 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Copy, Check, ExternalLink, X, CheckCircle, RefreshCw,
   Layers, Clock, Zap, ArrowRight, ChevronRight,
-  AlertCircle,
+  AlertCircle, Package, Edit2, Link, Save, Loader2
 } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 import UpgradeModal from '../../components/UpgradeModal'
 import { usePlan } from '../../hooks/usePlan'
+import type { Product } from '../../types'
 
 type Platform = 'kiwify' | 'hotmart' | 'kirvano'
 
@@ -945,15 +946,17 @@ function TestRecoveryDrawer({
 
     // 2. Upsert produto de forma segura
     let productId = null
+    let dbProduct = null
     const { data: existingProduct } = await supabase
       .from('products')
-      .select('id')
+      .select('*')
       .eq('user_id', userId)
       .eq('external_product_id', product.id)
       .maybeSingle()
 
     if (existingProduct) {
       productId = existingProduct.id
+      dbProduct = existingProduct
     } else {
       const { data: newProduct } = await supabase
         .from('products')
@@ -966,6 +969,7 @@ function TestRecoveryDrawer({
         .select()
         .maybeSingle()
       productId = newProduct?.id ?? null
+      dbProduct = newProduct
     }
 
     // 3. Salvar evento
@@ -1006,7 +1010,7 @@ function TestRecoveryDrawer({
       nome: customer.full_name,
       produto: product.name,
       pix: payment.pix_qrcode,
-      link_checkout: 'https://pixrescue.com',
+      link_checkout: dbProduct?.checkout_url ?? 'https://pixrescue.com',
     }
 
     let sentAny = false
@@ -1031,6 +1035,45 @@ function TestRecoveryDrawer({
       return res.ok
     }
 
+    const sendMessageWithSplit = async (templateText: string, isDefault = false) => {
+      const hasPixPlaceholder = templateText.includes('{{pix}}');
+      
+      if (hasPixPlaceholder || isDefault) {
+        // Mensagem 1
+        let msg1Text = '';
+        if (isDefault) {
+          msg1Text = `Olá ${vars.nome} 👋\n\nPercebemos que sua compra de ${vars.produto} ainda não foi finalizada.\n\nPara concluir seu pagamento de forma rápida, clique no link abaixo:\n${vars.link_checkout}\n\nCaso prefira utilizar o PIX Copia e Cola, ele será enviado na próxima mensagem.`;
+        } else {
+          const msg1Template = templateText.replace(/{{pix}}/g, 'Caso prefira utilizar o PIX Copia e Cola, ele será enviado na próxima mensagem.');
+          msg1Text = msg1Template
+            .replace(/{{nome}}/g, vars.nome)
+            .replace(/{{produto}}/g, vars.produto)
+            .replace(/{{link_checkout}}/g, vars.link_checkout)
+            .replace(/{{checkout_url}}/g, vars.link_checkout);
+        }
+        
+        const ok1 = await sendMsgDirectly(msg1Text);
+        let finalSuccess = ok1;
+        
+        // Mensagem 2 (Apenas o código PIX limpo)
+        if (vars.pix && vars.pix.trim() !== '') {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const ok2 = await sendMsgDirectly(vars.pix.trim());
+          finalSuccess = ok1 && ok2;
+        }
+        
+        return finalSuccess;
+      } else {
+        const rendered = templateText
+          .replace(/{{nome}}/g, vars.nome)
+          .replace(/{{produto}}/g, vars.produto)
+          .replace(/{{link_checkout}}/g, vars.link_checkout)
+          .replace(/{{checkout_url}}/g, vars.link_checkout);
+          
+        return await sendMsgDirectly(rendered);
+      }
+    }
+
     if (activeFlow?.flow_steps?.length) {
       const steps = activeFlow.flow_steps.sort((a, b) => a.step_order - b.step_order)
       for (const step of steps) {
@@ -1042,13 +1085,7 @@ function TestRecoveryDrawer({
           status: 'pending',
         }).select().maybeSingle()
 
-        const rendered = step.message
-          .replace(/{{nome}}/g, vars.nome)
-          .replace(/{{produto}}/g, vars.produto)
-          .replace(/{{pix}}/g, vars.pix)
-          .replace(/{{link_checkout}}/g, vars.link_checkout)
-
-        const ok = await sendMsgDirectly(rendered)
+        const ok = await sendMessageWithSplit(step.message)
         finalOk = ok
 
         if (msgObj?.id) {
@@ -1064,8 +1101,7 @@ function TestRecoveryDrawer({
     }
 
     if (!sentAny) {
-      const defaultMsg = `Olá ${vars.nome} 👋\n\nVi que você iniciou a compra de *${vars.produto}*.\n\nSeu pagamento ainda está disponível.\n\nFinalize agora usando o código abaixo:\n\n${vars.pix}`
-      const ok = await sendMsgDirectly(defaultMsg)
+      const ok = await sendMessageWithSplit('', true)
       finalOk = ok
 
       await supabase.from('messages').insert({
@@ -1454,7 +1490,57 @@ export default function Integrations() {
   const [completedPlatform, setCompletedPlatform] = useState(false)
   const [upgradeModal, setUpgradeModal] = useState(false)
 
-  useEffect(() => { if (user) loadOrCreateIntegrations() }, [user])
+  // Estados para gerenciamento de Produtos
+  const [products, setProducts] = useState<Product[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(false)
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
+  const [editingCheckoutUrl, setEditingCheckoutUrl] = useState('')
+  const [savingProduct, setSavingProduct] = useState(false)
+
+  const loadProducts = async () => {
+    if (!user) return
+    setLoadingProducts(true)
+    try {
+      const { data } = await supabase
+        .from('products')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('product_name', { ascending: true })
+      if (data) setProducts(data)
+    } catch (err) {
+      console.error('Erro ao buscar produtos:', err)
+    } finally {
+      setLoadingProducts(false)
+    }
+  }
+
+  const handleSaveCheckoutUrl = async (productId: string) => {
+    if (!editingCheckoutUrl.trim()) return
+    setSavingProduct(true)
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ checkout_url: editingCheckoutUrl.trim() })
+        .eq('id', productId)
+      if (error) {
+        alert('Erro ao salvar URL de checkout: ' + error.message)
+      } else {
+        setEditingProductId(null)
+        await loadProducts()
+      }
+    } catch (err: any) {
+      alert('Erro ao salvar URL de checkout: ' + err.message)
+    } finally {
+      setSavingProduct(false)
+    }
+  }
+
+  useEffect(() => { 
+    if (user) {
+      loadOrCreateIntegrations()
+      loadProducts()
+    }
+  }, [user])
 
   const loadOrCreateIntegrations = async () => {
     setLoading(true)
@@ -1662,6 +1748,143 @@ export default function Integrations() {
           </div>
         </div>
 
+        {/* ─── Gerenciamento de Produtos (URL de Checkout) ─── */}
+        <div className="card" style={{ padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
+            <Package size={18} className="text-slate-600" />
+            <div>
+              <h3 className="font-outfit text-xs font-bold text-slate-800 uppercase tracking-wider">Meus Produtos & URLs de Checkout</h3>
+              <p className="text-[11px] text-slate-400 font-semibold mt-0.5">Gerencie o link da página de checkout de cada produto para as mensagens de recuperação.</p>
+            </div>
+          </div>
+
+          {loadingProducts ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '20px 0', justifyContent: 'center' }}>
+              <Loader2 size={16} className="animate-spin text-slate-500" />
+              <span className="text-xs font-semibold text-slate-500 font-outfit">Carregando seus produtos...</span>
+            </div>
+          ) : products.length === 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '24px 16px', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+              <Package size={24} className="text-slate-300" />
+              <span className="text-xs font-bold text-slate-500 font-outfit">Nenhum produto cadastrado ainda</span>
+              <p className="text-[10px] text-slate-400 font-semibold text-center max-w-[400px]">
+                Os produtos são criados de forma automática no recebimento do primeiro evento de webhook. 
+                Você também pode simular um evento clicando em <strong>"Testar Recuperação"</strong> acima!
+              </p>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Nome do Produto</th>
+                    <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Plataforma</th>
+                    <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>URL de Checkout (Obrigatório)</th>
+                    <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', textAlign: 'right' }}>Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map(product => {
+                    const isEditing = editingProductId === product.id
+                    return (
+                      <tr key={product.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background-color 0.15s ease' }} className="hover:bg-slate-50/50">
+                        {/* Nome do Produto */}
+                        <td style={{ padding: '12px', fontSize: 12.5, fontWeight: 700, color: 'var(--text-main)' }} className="font-outfit">
+                          {product.product_name}
+                        </td>
+                        
+                        {/* Plataforma */}
+                        <td style={{ padding: '12px' }}>
+                          <span className={`badge text-[9px] font-bold uppercase`} style={{
+                            background: product.platform === 'kiwify' ? '#ecfdf5' : product.platform === 'hotmart' ? '#fff7ed' : '#fef2f2',
+                            color: product.platform === 'kiwify' ? '#047857' : product.platform === 'hotmart' ? '#c2410c' : '#b91c1c',
+                            border: `1px solid ${product.platform === 'kiwify' ? '#bbf7d0' : product.platform === 'hotmart' ? '#ffedd5' : '#fee2e2'}`,
+                          }}>
+                            {product.platform === 'kiwify' ? '🟢 Kiwify' : product.platform === 'hotmart' ? '🔥 Hotmart' : '🔴 Kirvano'}
+                          </span>
+                        </td>
+                        
+                        {/* Checkout URL Input / Value */}
+                        <td style={{ padding: '12px', minWidth: '320px' }}>
+                          {isEditing ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <Link size={12} className="text-slate-400" />
+                              <input
+                                type="url"
+                                className="input-field text-xs"
+                                style={{ height: 32, padding: '4px 8px', margin: 0, background: '#fff' }}
+                                value={editingCheckoutUrl}
+                                onChange={e => setEditingCheckoutUrl(e.target.value)}
+                                placeholder="https://checkout.exemplo.com/seu-produto"
+                                autoFocus
+                              />
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {product.checkout_url ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <Link size={12} className="text-emerald-500" />
+                                  <a href={product.checkout_url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-emerald-700 hover:underline break-all" style={{ maxWidth: '280px', display: 'inline-block' }}>
+                                    {product.checkout_url}
+                                  </a>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <AlertCircle size={12} className="text-red-500 animate-pulse" />
+                                  <span className="text-xs font-bold text-red-500">
+                                    ⚠️ URL de Checkout em falta (Recuperação Inativa)
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        
+                        {/* Ações */}
+                        <td style={{ padding: '12px', textAlign: 'right' }}>
+                          {isEditing ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                              <button
+                                onClick={() => handleSaveCheckoutUrl(product.id)}
+                                disabled={savingProduct || !editingCheckoutUrl.trim()}
+                                className="btn btn-primary btn-sm"
+                                style={{ height: 28, padding: '0 10px', background: '#10b981', border: 'none', fontSize: 10.5, gap: 4 }}
+                              >
+                                {savingProduct ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                                Salvar
+                              </button>
+                              <button
+                                onClick={() => setEditingProductId(null)}
+                                className="btn btn-outline btn-sm"
+                                style={{ height: 28, padding: '0 10px', fontSize: 10.5, gap: 4 }}
+                              >
+                                <X size={10} />
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingProductId(product.id)
+                                setEditingCheckoutUrl(product.checkout_url ?? '')
+                              }}
+                              className="btn btn-outline btn-sm font-bold"
+                              style={{ height: 28, padding: '0 10px', fontSize: 10.5, gap: 4 }}
+                            >
+                              <Edit2 size={10} />
+                              Configurar URL
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* Webhook credentials for reference */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="card" style={{ padding: 20 }}>
@@ -1697,7 +1920,7 @@ export default function Integrations() {
         <TestRecoveryDrawer
           platform={openTestPlatform}
           integration={integrations[openTestPlatform]}
-          onClose={() => setOpenTestPlatform(null)}
+          onClose={() => { setOpenTestPlatform(null); loadProducts(); }}
         />
       )}
     </AppLayout>

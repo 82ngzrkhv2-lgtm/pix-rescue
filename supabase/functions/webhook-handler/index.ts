@@ -138,6 +138,7 @@ function renderMessage(template: string, vars: Record<string, string>) {
     .replace(/{{produto}}/g, vars.produto ?? '')
     .replace(/{{pix}}/g, vars.pix ?? '')
     .replace(/{{link_checkout}}/g, vars.link_checkout ?? '')
+    .replace(/{{checkout_url}}/g, vars.link_checkout ?? '')
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
@@ -222,16 +223,18 @@ serve(async (req) => {
 
     // 4. Upsert produto de forma segura (evita erro de constraint 42P10)
     let productId: string | null = null
+    let dbProduct: any = null
     if (product_name) {
       const { data: existingProduct } = await supabase
         .from('products')
-        .select('id')
+        .select('*')
         .eq('user_id', userId)
         .eq('external_product_id', external_product_id ?? '')
         .maybeSingle()
 
       if (existingProduct) {
         productId = existingProduct.id
+        dbProduct = existingProduct
         await supabase
           .from('products')
           .update({ product_name, platform })
@@ -248,6 +251,7 @@ serve(async (req) => {
           .select()
           .maybeSingle()
         productId = newProduct?.id ?? null
+        dbProduct = newProduct
       }
     }
 
@@ -355,11 +359,59 @@ serve(async (req) => {
         nome: name ?? 'cliente',
         produto: product_name ?? 'produto',
         pix: pix_code ?? '00020101021226870014br.gov.bcb.pix2565qr.example.com/pix/test',
-        link_checkout: checkout_url ?? 'https://pixrescue.com',
+        link_checkout: dbProduct?.checkout_url ?? checkout_url ?? 'https://pixrescue.com',
       }
 
       if (instance && profile?.evolution_api_url && lead?.id) {
         let sentAny = false
+
+        const sendMessageWithSplit = async (templateText: string, isDefault = false) => {
+          const hasPixPlaceholder = templateText.includes('{{pix}}');
+          
+          if (hasPixPlaceholder || isDefault) {
+            // Mensagem 1
+            let msg1Text = '';
+            if (isDefault) {
+              msg1Text = `Olá ${vars.nome} 👋\n\nPercebemos que sua compra de ${vars.produto} ainda não foi finalizada.\n\nPara concluir seu pagamento de forma rápida, clique no link abaixo:\n${vars.link_checkout}\n\nCaso prefira utilizar o PIX Copia e Cola, ele será enviado na próxima mensagem.`;
+            } else {
+              const msg1Template = templateText.replace(/{{pix}}/g, 'Caso prefira utilizar o PIX Copia e Cola, ele será enviado na próxima mensagem.');
+              msg1Text = renderMessage(msg1Template, vars);
+            }
+            
+            const ok1 = await sendWhatsAppMessage(
+              profile.evolution_api_url,
+              profile.evolution_api_key ?? '',
+              instance.instance_name,
+              phone,
+              msg1Text
+            );
+            let finalSuccess = ok1;
+            
+            // Mensagem 2 (Apenas o código PIX limpo)
+            if (vars.pix && vars.pix.trim() !== '') {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const ok2 = await sendWhatsAppMessage(
+                profile.evolution_api_url,
+                profile.evolution_api_key ?? '',
+                instance.instance_name,
+                phone,
+                vars.pix.trim()
+              );
+              finalSuccess = ok1 && ok2;
+            }
+            
+            return finalSuccess;
+          } else {
+            const rendered = renderMessage(templateText, vars);
+            return await sendWhatsAppMessage(
+              profile.evolution_api_url,
+              profile.evolution_api_key ?? '',
+              instance.instance_name,
+              phone,
+              rendered
+            );
+          }
+        }
 
         if (activeFlow?.flow_steps?.length) {
           const steps = (activeFlow.flow_steps as any[]).sort((a, b) => a.step_order - b.step_order)
@@ -376,14 +428,7 @@ serve(async (req) => {
 
             // Disparar após delay (se for teste, dispara a primeira ativa imediatamente!)
             if (step.delay_minutes === 0 || (isTest && !sentAny)) {
-              const rendered = renderMessage(step.message, vars)
-              const ok = await sendWhatsAppMessage(
-                profile.evolution_api_url,
-                profile.evolution_api_key ?? '',
-                instance.instance_name,
-                phone,
-                rendered
-              )
+              const ok = await sendMessageWithSplit(step.message)
               if (msgObj?.id) {
                 await supabase.from('messages').update({
                   status: ok ? 'sent' : 'failed',
@@ -401,15 +446,7 @@ serve(async (req) => {
 
         // Se for teste e não enviou nada porque não tem passos ativos ou fluxo ativo, enviar o padrão
         if (isTest && !sentAny) {
-          const defaultMsg = `Olá ${vars.nome} 👋\n\nVi que você iniciou a compra de *${vars.produto}*.\n\nSeu pagamento ainda está disponível.\n\nFinalize agora usando o código abaixo:\n\n${vars.pix}`
-          
-          const ok = await sendWhatsAppMessage(
-            profile.evolution_api_url,
-            profile.evolution_api_key ?? '',
-            instance.instance_name,
-            phone,
-            defaultMsg
-          )
+          const ok = await sendMessageWithSplit('', true)
 
           await supabase.from('messages').insert({
             lead_id: lead.id,

@@ -46,6 +46,7 @@ export interface Product {
   product_name: string
   external_product_id: string
   platform: Platform
+  checkout_url?: string | null
   created_at: string
 }
 
