@@ -662,19 +662,6 @@ export default function WhatsApp() {
                     Cancelar
                   </button>
                 </>
-              ) : atLimit ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, width: '100%' }}>
-                  <button
-                    disabled
-                    className="btn btn-primary"
-                    style={{ width: '100%', maxWidth: '240px', opacity: 0.4, cursor: 'not-allowed' }}
-                  >
-                    <QrCode size={14} /> Conectar WhatsApp
-                  </button>
-                  <p style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textAlign: 'center' }}>
-                    Limite atingido. Faça upgrade para conectar mais números.
-                  </p>
-                </div>
               ) : (
                 <button id="whatsapp-connect" onClick={handleConnect} disabled={loading} className="btn btn-primary" style={{ width: '100%', maxWidth: '240px' }}>
                   {loading ? <Loader2 size={14} className="animate-spin" /> : <QrCode size={14} />}
