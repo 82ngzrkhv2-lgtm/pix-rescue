@@ -141,16 +141,25 @@ export default function Flows() {
 
       if (!flowDbId) throw new Error('Falha ao salvar fluxo')
 
-      // Upsert steps
-      for (const step of flow.steps) {
-        await supabase.from('flow_steps').upsert({
-          flow_id: flowDbId,
-          delay_minutes: step.delayMinutes,
-          message: step.message,
-          active: step.active,
-          step_order: step.stepOrder,
-        }, { onConflict: 'flow_id,step_order' })
-      }
+      // Deleta etapas anteriores de forma segura (evita erro de constraint no upsert)
+      await supabase.from('flow_steps')
+        .delete()
+        .eq('flow_id', flowDbId)
+
+      // Insere as novas etapas
+      const stepsToInsert = flow.steps.map(step => ({
+        flow_id: flowDbId,
+        delay_minutes: step.delayMinutes,
+        message: step.message,
+        active: step.active,
+        step_order: step.stepOrder,
+      }))
+
+      const { error: stepsErr } = await supabase
+        .from('flow_steps')
+        .insert(stepsToInsert)
+
+      if (stepsErr) throw stepsErr
 
       // If active, deactivate other flows
       if (flow.active) {
