@@ -9,7 +9,7 @@ import { usePlan } from '../../hooks/usePlan'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
-const EVOLUTION_URL = import.meta.env.VITE_EVOLUTION_API_URL
+const EVOLUTION_URL = import.meta.env.DEV ? '/evolution-api' : import.meta.env.VITE_EVOLUTION_API_URL
 const EVOLUTION_KEY = import.meta.env.VITE_EVOLUTION_API_KEY
 
 async function evolutionRequest(path: string, options: RequestInit = {}) {
