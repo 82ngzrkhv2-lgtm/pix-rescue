@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, ArrowUpRight } from 'lucide-react'
+import { RefreshCw, ArrowUpRight, Zap } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import PlanUsageBar from '../../components/PlanUsageBar'
+import UpgradeModal from '../../components/UpgradeModal'
+import { usePlan, PLAN_LIMITS } from '../../hooks/usePlan'
 
 interface Stats {
   revenueRecovered: number
@@ -170,9 +173,13 @@ function useDashboardData(userId?: string) {
 export default function Dashboard() {
   const { user } = useAuth()
   const { stats, revenueChart, events, loading, reload } = useDashboardData(user?.id)
+  const { plan, limits, usage, eventsPct, roi } = usePlan()
   const hasData = events.length > 0
+  const [upgradeModal, setUpgradeModal] = useState<'events' | 'whatsapps' | 'platforms' | 'history' | null>(null)
+  const planCost = PLAN_LIMITS[plan]?.costMonthly ?? 67
 
   return (
+    <>
     <AppLayout title="Dashboard" subtitle="Visão geral de recuperação de vendas e conversão">
       <div className="space-y-6 animate-fade-in">
         
@@ -294,6 +301,60 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Uso do Plano + ROI (Contadores e transparência) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+          {/* Card: Uso do Plano */}
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h3 className="font-outfit text-xs font-bold text-slate-500 uppercase tracking-wider">Uso do Plano</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="badge badge-gray text-[10px]">{plan}</span>
+                {eventsPct >= 80 && (
+                  <button
+                    onClick={() => setUpgradeModal('events')}
+                    className="btn btn-outline btn-sm font-semibold"
+                    style={{ fontSize: 10, padding: '3px 8px' }}
+                  >
+                    <Zap size={10} /> Upgrade
+                  </button>
+                )}
+              </div>
+            </div>
+            <PlanUsageBar
+              used={usage.events}
+              total={limits.events}
+              unit="eventos"
+              showAlert
+              alertThreshold={80}
+            />
+          </div>
+
+          {/* Card: ROI / Métricas de Negócio */}
+          <div className="card" style={{ padding: 20, borderLeft: '4px solid #10b981' }}>
+            <h3 className="font-outfit text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Retorno sobre Investimento</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <span className="font-outfit" style={{ fontSize: 28, fontWeight: 900, color: '#0f172a', lineHeight: 1 }}>
+                  R$ {loading ? '—' : stats.revenueRecovered.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+                <p className="text-xs text-slate-400 font-semibold mt-1">recuperados este mês com automação</p>
+              </div>
+              <div style={{ height: 1, background: '#f1f5f9' }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span className="text-xs font-semibold text-slate-500">Custo do plano</span>
+                <span className="font-outfit text-xs font-extrabold text-slate-700">R$ {planCost}/mês</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span className="text-xs font-semibold text-slate-500">ROI estimado</span>
+                <span className="font-outfit font-extrabold" style={{ color: '#10b981', fontSize: 15 }}>
+                  {roi > 0 ? `${roi.toLocaleString('pt-BR')}%` : 'Aguardando dados'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Tabela de Eventos Recentes */}
         <div className="card overflow-hidden">
           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -347,5 +408,14 @@ export default function Dashboard() {
         </div>
       </div>
     </AppLayout>
+
+    {upgradeModal && (
+      <UpgradeModal
+        trigger={upgradeModal}
+        currentPlan={plan}
+        onClose={() => setUpgradeModal(null)}
+      />
+    )}
+    </>
   )
 }

@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, Power, QrCode, Wifi, WifiOff, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { RefreshCw, Power, QrCode, Wifi, WifiOff, Loader2, AlertCircle, CheckCircle2, Zap } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+import PlanUsageBar from '../../components/PlanUsageBar'
+import UpgradeModal from '../../components/UpgradeModal'
+import { usePlan } from '../../hooks/usePlan'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -26,6 +29,9 @@ async function evolutionRequest(path: string, options: RequestInit = {}) {
 export default function WhatsApp() {
   const { user } = useAuth()
   const instanceName = `pixrescue-${user?.id?.slice(0, 8) ?? 'user'}`
+  const { plan, limits, usage } = usePlan()
+  const atLimit = usage.whatsapps >= limits.whatsapps
+  const [upgradeModal, setUpgradeModal] = useState(false)
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
   const [phone, setPhone] = useState<string | null>(null)
@@ -162,9 +168,37 @@ export default function WhatsApp() {
   }
 
   return (
+    <>
     <AppLayout title="WhatsApp" subtitle="Integre seu WhatsApp via Evolution API para disparar mensagens instantâneas">
       <div className="animate-fade-in space-y-6">
-        
+
+        {/* Plan usage counter */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <h3 className="font-outfit text-xs font-bold text-slate-500 uppercase tracking-wider">WhatsApps Conectados</h3>
+            <span className="badge badge-gray text-[10px]">{plan}</span>
+          </div>
+          <PlanUsageBar used={usage.whatsapps} total={limits.whatsapps} unit="números" showAlert={false} />
+          {atLimit && (
+            <div style={{
+              marginTop: 12, padding: '10px 14px',
+              background: '#fef2f2', border: '1px solid #fca5a5',
+              borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8
+            }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: '#991b1b' }}>
+                🚑 Você atingiu o limite de números do seu plano.
+              </p>
+              <button
+                onClick={() => setUpgradeModal(true)}
+                className="btn btn-outline btn-sm font-bold"
+                style={{ color: '#dc2626', borderColor: '#fca5a5', fontSize: 10, flexShrink: 0 }}
+              >
+                <Zap size={10} /> Upgrade
+              </button>
+            </div>
+          )}
+        </div>
+
         {error && (
           <div className="p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3 text-red-700">
             <AlertCircle size={16} />
@@ -333,6 +367,19 @@ export default function WhatsApp() {
                     Cancelar
                   </button>
                 </>
+              ) : atLimit ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, width: '100%' }}>
+                  <button
+                    disabled
+                    className="btn btn-primary"
+                    style={{ width: '100%', maxWidth: '240px', opacity: 0.4, cursor: 'not-allowed' }}
+                  >
+                    <QrCode size={14} /> Conectar WhatsApp
+                  </button>
+                  <p style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textAlign: 'center' }}>
+                    Limite atingido. Faça upgrade para conectar mais números.
+                  </p>
+                </div>
               ) : (
                 <button id="whatsapp-connect" onClick={handleConnect} disabled={loading} className="btn btn-primary" style={{ width: '100%', maxWidth: '240px' }}>
                   {loading ? <Loader2 size={14} className="animate-spin" /> : <QrCode size={14} />}
@@ -341,10 +388,17 @@ export default function WhatsApp() {
               )}
             </div>
           </div>
-
         </div>
-
       </div>
     </AppLayout>
+
+    {upgradeModal && (
+      <UpgradeModal
+        trigger="whatsapps"
+        currentPlan={plan}
+        onClose={() => setUpgradeModal(false)}
+      />
+    )}
+    </>
   )
 }

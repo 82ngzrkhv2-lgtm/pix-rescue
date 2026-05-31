@@ -1,0 +1,10 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = true
+	ignorecase = true
+[remote "origin"]
+	url = https://github.com/82ngzrkhv2-lgtm/PIX-RECUE.git
+	tagOpt = --no-tags
+	fetch = +refs/*:refs/*
+	mirror = true

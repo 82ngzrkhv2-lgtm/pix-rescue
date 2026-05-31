@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Copy, Check, ExternalLink, ChevronRight, X, CheckCircle, RefreshCw, Layers } from 'lucide-react'
+import { Copy, Check, ExternalLink, ChevronRight, X, CheckCircle, RefreshCw, Layers, Clock, Zap, ArrowRight } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+import UpgradeModal from '../../components/UpgradeModal'
+import { usePlan } from '../../hooks/usePlan'
 
 type Platform = 'kiwify' | 'hotmart' | 'kirvano'
 
@@ -165,10 +167,12 @@ function OnboardingModal({ platform, integration, onClose }: {
 
 export default function Integrations() {
   const { user } = useAuth()
+  const { plan, limits, usage, canSwapPlatform, daysUntilSwap, activePlatform } = usePlan()
   const [integrations, setIntegrations] = useState<Record<Platform, IntegrationData | null>>({ kiwify: null, hotmart: null, kirvano: null })
   const [openPlatform, setOpenPlatform] = useState<Platform | null>(null)
   const [loading, setLoading] = useState(true)
   const [completedPlatform, setCompletedPlatform] = useState(false)
+  const [upgradeModal, setUpgradeModal] = useState(false)
 
   useEffect(() => { if (user) loadOrCreateIntegrations() }, [user])
 
@@ -292,6 +296,83 @@ export default function Integrations() {
           )}
         </div>
 
+        {/* Card: Plataforma Ativa com Cooldown */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+            <h3 className="font-outfit text-xs font-bold text-slate-500 uppercase tracking-wider">Plataforma Ativa</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="badge badge-gray text-[10px]">{plan}</span>
+              <span className="badge badge-gray text-[10px]">{usage.platforms} / {limits.platforms} plataformas</span>
+            </div>
+          </div>
+
+          {activePlatform ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 10,
+                  background: '#f8fafc', border: '1px solid #e2e8f0',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20
+                }}>
+                  {activePlatform === 'hotmart' ? '🔥' : activePlatform === 'kiwify' ? '🟢' : '🔴'}
+                </div>
+                <div>
+                  <span className="font-outfit font-extrabold text-sm text-slate-800 block capitalize">{activePlatform}</span>
+                  <span className="badge badge-green text-[10px]">Ativa</span>
+                </div>
+              </div>
+
+              {canSwapPlatform ? (
+                <button
+                  onClick={() => setOpenPlatform('hotmart')}
+                  className="btn btn-primary btn-sm font-semibold"
+                  style={{ gap: 6 }}
+                >
+                  <ArrowRight size={12} /> Trocar Plataforma
+                </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <button
+                    disabled
+                    className="btn btn-outline btn-sm font-semibold"
+                    style={{ opacity: 0.4, cursor: 'not-allowed', gap: 6 }}
+                  >
+                    <Clock size={12} /> Trocar Plataforma
+                  </button>
+                  <span className="text-[11px] text-slate-400 font-semibold">
+                    Próxima troca disponível em <strong>{daysUntilSwap} dias</strong>
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0' }}>
+              <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>
+                Nenhuma plataforma ativa ainda. Configure uma integração abaixo.
+              </span>
+            </div>
+          )}
+
+          {usage.platforms >= limits.platforms && (
+            <div style={{
+              marginTop: 12, padding: '10px 14px',
+              background: '#fef2f2', border: '1px solid #fca5a5',
+              borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8
+            }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: '#991b1b' }}>
+                Limite de plataformas atingido. Faça upgrade para adicionar mais.
+              </p>
+              <button
+                onClick={() => setUpgradeModal(true)}
+                className="btn btn-outline btn-sm font-bold"
+                style={{ color: '#dc2626', borderColor: '#fca5a5', fontSize: 10, flexShrink: 0 }}
+              >
+                <Zap size={10} /> Upgrade
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Grid of Platform Cards (Fidelidade ao UI Designer: TELA 3) */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
@@ -362,6 +443,14 @@ export default function Integrations() {
           platform={openPlatform}
           integration={integrations[openPlatform]}
           onClose={() => handleOnboardingClose(openPlatform)}
+        />
+      )}
+
+      {upgradeModal && (
+        <UpgradeModal
+          trigger="platforms"
+          currentPlan={plan}
+          onClose={() => setUpgradeModal(false)}
         />
       )}
     </AppLayout>
