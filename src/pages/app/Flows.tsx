@@ -107,6 +107,7 @@ export default function Flows() {
   }
 
   const formatMinutesToDelay = (min: number) => {
+    if (min === 0) return 'Imediato'
     if (min === 5) return '5 minutos'
     if (min === 30) return '30 minutos'
     if (min === 60) return '1 hora'
@@ -326,6 +327,7 @@ export default function Flows() {
                         className="input-field py-1 px-2 text-xs"
                         style={{ width: 'auto', background: 'transparent', border: 'none', fontWeight: 600, color: 'var(--text-secondary)' }}
                       >
+                        <option value={0}>Imediato (0 min)</option>
                         <option value={5}>5 minutos</option>
                         <option value={30}>30 minutos</option>
                         <option value={60}>1 hora</option>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  Activity, CheckCircle2, XCircle, Play, StopCircle, Clock, AlertTriangle,
-  Loader2, RefreshCw, Terminal, ArrowRight, ShieldCheck, Heart, Sparkles, Award
+  Play, StopCircle, AlertTriangle,
+  Loader2, RefreshCw, Terminal, ShieldCheck, Sparkles, Award
 } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { useAuth } from '../../hooks/useAuth'
@@ -82,7 +82,6 @@ export default function Homologation() {
 
   // Dados temporais da homologação
   const [startedAt, setStartedAt] = useState<Date | null>(null)
-  const [phase1FinishedAt, setPhase1FinishedAt] = useState<Date | null>(null)
   const [finishedAt, setFinishedAt] = useState<Date | null>(null)
   
   const consoleEndRef = useRef<HTMLDivElement>(null)
@@ -262,7 +261,6 @@ export default function Homologation() {
     loggedEventsRef.current = new Set()
     setPixEvent(null)
     setPaidEvent(null)
-    setPhase1FinishedAt(null)
     setFinishedAt(null)
     setHomologationMode('phase1')
 
@@ -340,8 +338,8 @@ export default function Homologation() {
             const payload = pixGen.payload || {}
             const pName = pixGen.leads?.name || ''
             const pProd = pixGen.products?.product_name || ''
-            const pPix = payload.payment?.pix_qrcode || payload.pix?.qrcode || ''
-            const pCheckout = payload.checkout_url || ''
+            const pPix = payload.pix_code || payload.payment?.pix_qrcode || payload.pix?.qrcode || ''
+            const pCheckout = payload.checkout_link || payload.checkout_url || ''
 
             const nameOk = pName.length > 0
             const prodOk = pProd.length > 0
@@ -355,8 +353,8 @@ export default function Homologation() {
               .eq('lead_id', pixGen.lead_id)
               .order('created_at', { ascending: false })
 
-            const msgGenerated = messages && messages.length > 0
-            const msgSent = messages && messages.some(m => m.status === 'sent')
+            const msgGenerated = !!(messages && messages.length > 0)
+            const msgSent = !!(messages && messages.some(m => m.status === 'sent'))
 
             setPhase1Checks({
               webhookArrived: true,
@@ -385,7 +383,6 @@ export default function Homologation() {
               addLog('⚠️ Mensagem registrada na fila pendente ou em processo de envio.', 'warning')
             }
 
-            setPhase1FinishedAt(new Date())
             setHomologationMode('phase2')
             addLog('✅ FASE 1 CONCLUÍDA!', 'success')
             addLog('Aguardando evento de Compra Aprovada (PIX Confirmado) da Kiwify...', 'warning')
@@ -416,17 +413,17 @@ export default function Homologation() {
             const flowCancelled = !hasPending
 
             // Verificar se houve disparo pós-venda (opcional no banco)
-            const postSaleSent = leadMessages?.some(m => m.status === 'sent' && m.flow_step_id === null) 
-              || paidGen.event_type === 'purchase_approved' // Mock de envio ou validação
+            const postSaleSent = !!(leadMessages?.some(m => m.status === 'sent' && m.flow_step_id === null) 
+              || paidGen.event_type === 'purchase_approved') // Mock de envio ou validação
 
             setPhase2Checks({
               webhookArrived: true,
               eventSaved: true,
               leadIdentified: true,
               flowLocated: true,
-              flowCancelled: flowCancelled,
+              flowCancelled: !!flowCancelled,
               dashboardUpdated: true, // Já que o evento de receita foi inserido, o dashboard atualiza em tempo real!
-              postSaleTriggered: true
+              postSaleTriggered: postSaleSent
             })
 
             addLog('✓ Validação de Cancelamento de Spams concluída: Todos os próximos agendamentos suspensos!', 'success')
@@ -673,11 +670,11 @@ export default function Homologation() {
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-semibold">
                         <div className="flex items-center gap-1.5">
                           <span>{phase1Checks.contentChecked.name ? '🟢' : '🔴'}</span>
-                          <span className="text-slate-600">Nome ({{nome}})</span>
+                          <span className="text-slate-600">Nome ({"{{nome}}"})</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span>{phase1Checks.contentChecked.product ? '🟢' : '🔴'}</span>
-                          <span className="text-slate-600">Produto ({{produto}})</span>
+                          <span className="text-slate-600">Produto ({"{{produto}}"})</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span>{phase1Checks.contentChecked.link ? '🟢' : '🔴'}</span>

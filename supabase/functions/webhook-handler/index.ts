@@ -16,16 +16,25 @@ function normalizeKiwify(body: any) {
     approved: 'purchase_approved',
     refunded: 'purchase_approved',
   }
+
+  // Real Kiwify payloads use capitalized keys: Customer, Product.
+  // Mock/Simulated payloads might use lowercase keys.
+  const customer = body.Customer ?? body.customer ?? {}
+  const product = body.Product ?? body.product ?? {}
+  const payment = body.payment ?? {}
+  const commissions = body.Commissions ?? {}
+  const order = body.order ?? {}
+
   return {
     event_type: eventMap[status] ?? 'pix_generated',
-    name: body.customer?.full_name ?? body.customer?.name ?? null,
-    email: body.customer?.email ?? null,
-    phone: body.customer?.mobile ?? body.customer?.phone ?? null,
-    product_name: body.product?.name ?? null,
-    external_product_id: body.product?.id ?? null,
-    pix_code: body.payment?.pix_qrcode ?? null,
-    checkout_url: body.checkout_url ?? null,
-    revenue: parseFloat(body.order?.amount ?? '0') / 100,
+    name: customer.full_name ?? customer.name ?? null,
+    email: customer.email ?? null,
+    phone: customer.mobile ?? customer.phone ?? null,
+    product_name: product.product_name ?? product.name ?? null,
+    external_product_id: product.product_id ?? product.id ?? null,
+    pix_code: body.pix_code ?? payment.pix_qrcode ?? null,
+    checkout_url: body.checkout_link ?? body.checkout_url ?? null,
+    revenue: parseFloat(commissions.charge_amount ?? order.amount ?? '0') / 100,
     raw: body,
   }
 }
@@ -223,10 +232,11 @@ serve(async (req) => {
     // 2. Normalizar payload
     const normalizer = normalizers[platform]
     const normalized = normalizer(body)
-    const { event_type, name, email, phone, product_name, external_product_id, pix_code, checkout_url, revenue, raw } = normalized
+    const { event_type, name, email, phone: rawPhone, product_name, external_product_id, pix_code, checkout_url, revenue, raw } = normalized
+    const phone = rawPhone ? formatBrazilianPhone(rawPhone) : ''
 
     if (!phone) {
-      return new Response(JSON.stringify({ received: true, warning: 'Sem telefone no payload' }), {
+      return new Response(JSON.stringify({ received: true, warning: 'Sem telefone válido no payload' }), {
         status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -292,7 +302,7 @@ serve(async (req) => {
     }
 
     // 5. Salvar evento
-    await supabase.from('events').insert({
+    const { data: insertedEvent } = await supabase.from('events').insert({
       user_id: userId,
       lead_id: lead?.id ?? null,
       product_id: productId,
@@ -300,12 +310,23 @@ serve(async (req) => {
       platform,
       payload: raw,
       revenue: event_type === 'pix_paid' || event_type === 'purchase_approved' ? revenue : 0,
-    })
+    }).select('id').maybeSingle()
 
     // 6. Lógica de automação
 
     if (event_type === 'pix_paid' || event_type === 'purchase_approved') {
-      // Cancelar fluxo pendente — apenas registra (implementação futura com job scheduler)
+      // Cancelar futuras mensagens de recuperação pendentes para este lead
+      if (lead?.id) {
+        await supabase
+          .from('messages')
+          .update({
+            status: 'failed',
+            error_message: 'Compra finalizada (fluxo interrompido)'
+          })
+          .eq('lead_id', lead.id)
+          .eq('status', 'pending')
+      }
+
       // Enviar mensagem de confirmação
       const { data: instance } = await supabase
         .from('whatsapp_instances')
@@ -336,20 +357,28 @@ serve(async (req) => {
     }
 
     const isTest = body.is_test === true
+    const nameLower = (name ?? '').toLowerCase()
+    const emailLower = (email ?? '').toLowerCase()
+    const isValidationTest = isTest || nameLower.includes('teste') || emailLower.includes('test')
 
     if (event_type === 'pix_generated' || event_type === 'boleto_generated') {
       // 1. Evitar spam de múltiplos PIX para o mesmo lead em curto período (apenas em produção, ignorando testes manuais)
-      if (!isTest && lead?.id) {
+      if (!isValidationTest && lead?.id) {
         const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
         
-        // Verificar se houve outro evento do mesmo tipo nos últimos 5 minutos
-        const { data: recentEvents } = await supabase
+        // Verificar se houve outro evento do mesmo tipo nos últimos 5 minutos (excluindo o atual)
+        let query = supabase
           .from('events')
           .select('id')
           .eq('lead_id', lead.id)
           .eq('event_type', event_type)
           .gte('created_at', fiveMinutesAgo)
-          .limit(1)
+
+        if (insertedEvent?.id) {
+          query = query.neq('id', insertedEvent.id)
+        }
+
+        const { data: recentEvents } = await query.limit(1)
 
         // Verificar se já possui alguma mensagem pendente na fila
         const { data: pendingMessages } = await supabase
@@ -463,7 +492,7 @@ serve(async (req) => {
             }).select().single()
 
             // Disparar após delay (se for teste, dispara a primeira ativa imediatamente!)
-            if (step.delay_minutes === 0 || (isTest && !sentAny)) {
+            if (step.delay_minutes === 0 || (isValidationTest && !sentAny)) {
               const ok = await sendMessageWithSplit(step.message)
               if (msgObj?.id) {
                 await supabase.from('messages').update({
@@ -472,7 +501,7 @@ serve(async (req) => {
                 }).eq('id', msgObj.id)
               }
               
-              if (isTest) {
+              if (isValidationTest) {
                 sentAny = true
                 break // apenas um disparo no teste
               }
@@ -481,7 +510,7 @@ serve(async (req) => {
         }
 
         // Se for teste e não enviou nada porque não tem passos ativos ou fluxo ativo, enviar o padrão
-        if (isTest && !sentAny) {
+        if (isValidationTest && !sentAny) {
           const ok = await sendMessageWithSplit('', true)
 
           await supabase.from('messages').insert({
